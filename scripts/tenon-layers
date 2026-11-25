@@ -376,6 +376,14 @@ lint_layers() {
             lint_err "[$name] capability '$ref' packages: key '$bad_key' must be one of $LINT_MANAGERS, with a string value"
         done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select((.packages | type) == "!!map") | .id as $id | .packages | to_entries[] | select((.key | test("^('"${LINT_MANAGERS// /|}"')$") | not) or (.value | type) != "!!str") | $id + " " + .key')"
 
+        # uv specs must be a bare name, name@url or an absolute directory: the
+        # engine matches installed tools by name, so a pin or extra reinstalls every run.
+        # shellcheck disable=SC2016 # `$id` is a yq variable, not a shell one
+        while read -r ref bad_key; do
+            [[ -z "$ref" ]] && continue
+            lint_err "[$name] capability '$ref' packages: uv spec '$bad_key' must be a bare PyPI name, name@url or an absolute directory"
+        done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select((.packages.uv | type) == "!!str") | .id as $id | .packages.uv | sub("\{\{[^}]*\}\}"; "/x") | split(" ")[] | select(length > 0) | select(test("^([A-Za-z0-9][A-Za-z0-9._-]*(@\S+)?|/\S*)$") | not) | $id + " " + .')"
+
         # config: entries. `src`/`dest` are the whole contract; `executable`
         # is the only optional key. `mode:` was the old spelling -- catch it,
         # because an unknown key is silently ignored by the engine and the file

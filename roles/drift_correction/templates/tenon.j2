@@ -328,7 +328,10 @@ cmd_apply() {
 {% if tenon_platform.runner.sudo_on_apply %}
     collect_sudo_password
 {% endif %}
-    run_foreground apply "$(( $# > 0 ))" local.yml "$@"
+    # No terminal (e.g. the tray app): a login remedy would hang on a browser flow.
+    local -a mode_args=()
+    [[ -t 0 ]] || mode_args=(-e tenon_interactive=false)
+    run_foreground apply "$(( $# > 0 ))" "${mode_args[@]}" local.yml "$@"
     local rc=$?
     unset TENON_SUDO_PASSWORD
     return "$rc"

@@ -28,6 +28,7 @@ cat > "$T/bin/ansible-pull" <<STUB
 #!/bin/bash
 echo x >> "$T/pull-calls"
 printf '%s\\n' "\$*" > "$T/pull-args"
+printf '%s %s\\n' "\${TENON_RUN_MODE-}" "\${TENON_RUN_PARTIAL-}" > "$T/pull-mode"
 exit 0
 STUB
 chmod +x "$T/bin/git" "$T/bin/ansible-pull"
@@ -284,6 +285,14 @@ done
 [[ "$(printf '%s\n' "$T"/logs/*.log | wc -l | tr -d ' ')" == 2 ]] || fail "refused apply wrote a log"
 run apply --diff >/dev/null 2>&1 || fail "apply --diff was refused"
 echo "  ok  apply refuses --check, allows --diff"
+
+# 13c. apply without a terminal is non-interactive but not partial; user args still make it partial.
+run apply < /dev/null >/dev/null 2>&1 || fail "headless apply failed"
+[[ "$(cat "$T/pull-args")" == *"-e tenon_interactive=false"*" local.yml" ]] || fail "headless apply stayed interactive: $(cat "$T/pull-args")"
+[[ "$(cat "$T/pull-mode")" == "apply 0" ]] || fail "headless apply counted as partial: $(cat "$T/pull-mode")"
+run apply --tags x < /dev/null >/dev/null 2>&1 || fail "headless apply --tags failed"
+[[ "$(cat "$T/pull-mode")" == "apply 1" ]] || fail "apply --tags not partial: $(cat "$T/pull-mode")"
+echo "  ok  headless apply: non-interactive, partial only for user args"
 
 # 14. manifest: counts and sections from a fixture; missing file is a message.
 [[ "$(run manifest)" == "No manifest yet. Run \`tenon check\` to populate it." ]] || fail "missing manifest message changed"

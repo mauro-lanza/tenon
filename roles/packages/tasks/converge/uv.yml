@@ -6,7 +6,7 @@
 # and package managers" in docs/architecture.md.
 - name: "[uv] Locate the tool directory"
   ansible.builtin.command:
-    argv: [uv, tool, dir]
+    argv: ["{{ tenon_platform.uv_bin }}", tool, dir]
   register: _uv_tool_dir
   changed_when: false
   # Read-only; see "Probes under --check" in docs/architecture.md.
@@ -14,7 +14,7 @@
 
 - name: "[uv] List installed tools"
   ansible.builtin.command:
-    argv: [uv, tool, list]
+    argv: ["{{ tenon_platform.uv_bin }}", tool, list]
   register: _uv_installed
   changed_when: false
   check_mode: false
@@ -58,7 +58,7 @@
 
 - name: "[uv] Install tools"
   ansible.builtin.command:
-    argv: [uv, tool, install, "{{ item }}"]
+    argv: ["{{ tenon_platform.uv_bin }}", tool, install, "{{ item }}"]
   loop: "{{ _uv_install }}"
   changed_when: true
   when: not ansible_check_mode

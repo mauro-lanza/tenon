@@ -9,7 +9,7 @@
 
 - name: "[uv] Upgrade named tools"
   ansible.builtin.command:
-    argv: "{{ ['uv', 'tool', 'upgrade'] + _names }}"
+    argv: "{{ [tenon_platform.uv_bin, 'tool', 'upgrade'] + _names }}"
   vars:
     _names: "{{ _pkg_names | reject('match', '^/') | map('regex_replace', '@.*$', '') | list }}"
   register: _uv_upgrade

@@ -1052,6 +1052,7 @@ for expect in \
     "capability 'oldshape' packages: must be a mapping" \
     "capability 'oldtap' uses removed key 'tap:'" \
     "capability 'badmgr' packages: key 'apt' must be one of" \
+    "capability 'baduv' packages: uv spec 'ruff==0.5' must be a bare PyPI name" \
     "vars.yml sets 'homebrew_baseline_formulae', which no role reads" \
     "vars/Darwn.yml names no platform" \
     "preset selects capability 'does-not-exist'" \

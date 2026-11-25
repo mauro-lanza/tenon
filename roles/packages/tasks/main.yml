@@ -12,16 +12,16 @@
     quiet: true
   loop: "{{ tenon_packages | dict2items | rejectattr('key', 'eq', 'uv') | map(attribute='value') | flatten }}"
 
-# uv specs are tool install targets (a name, `name@url`, an absolute path), so
-# `:` and the rest of a URL are legal; only a leading `-` is not.
+# Installed tools are matched by the name before `@`, so pins and extras
+# (`ruff==0.5`, `ruff[x]`) are refused: they would reinstall on every run.
 - name: Validate declared uv specs
   ansible.builtin.assert:
     that:
       - item is string
-      - item is match('^[A-Za-z0-9/][^\s]*$')
+      - item is match('^([A-Za-z0-9][A-Za-z0-9._-]*(@\S+)?|/\S*)$')
     fail_msg: >-
-      '{{ item }}' is not a valid uv spec: a PyPI name, name@url or an
-      absolute directory.
+      '{{ item }}' is not a valid uv spec: use a bare PyPI name, name@url or
+      an absolute directory (no version pins or extras).
     quiet: true
   loop: "{{ tenon_packages.get('uv', []) }}"
 

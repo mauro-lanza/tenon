@@ -2,6 +2,20 @@
 # Vars: `_uv_dir`. Appends to `_uv_stale_dirs` when no tool receipt records
 # this directory, or a source file is newer than the receipt uv rewrote at the
 # last install.
+- name: "[uv] Stat {{ _uv_dir }}"
+  ansible.builtin.stat:
+    path: "{{ _uv_dir }}"
+  register: _uv_src
+
+- name: "[uv] Require the source directory"
+  ansible.builtin.assert:
+    that: _uv_src.stat.isdir | default(false)
+    fail_msg: >-
+      uv spec '{{ _uv_dir }}' is not an existing directory. Fix the `uv:`
+      entry in the capability's packages: (a layer path is
+      `{{ '{{' }} tenon_layer_cache {{ '}}' }}/<layer>/...`).
+    quiet: true
+
 - name: "[uv] Find the receipt of {{ _uv_dir }}"
   ansible.builtin.find:
     paths: "{{ _uv_tool_dir.stdout | trim }}"

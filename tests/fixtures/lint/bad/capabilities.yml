@@ -16,6 +16,7 @@ capabilities:
   - {id: oldtap, desc: "obsolete tap key", packages: {brew: owner/tap/thing}, tap: owner/tap}
   # An unknown manager installs nothing on any platform.
   - {id: badmgr, desc: "unknown package manager", packages: {apt: thing}}
+  - {id: baduv, desc: "pinned uv spec", packages: {uv: "ok-tool ruff==0.5"}}
   # `mode:` was the old spelling of the executable flag. An unknown key in a
   # config: entry is silently ignored, so the script would deploy without its
   # executable bit and the scheduled agent invoking it would just never fire.

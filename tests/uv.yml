@@ -7,6 +7,9 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    tenon_platform:
+      uv_bin: "{{ s.path }}/uv"
   tasks:
     - name: Scratch dir
       ansible.builtin.tempfile:
@@ -121,6 +124,59 @@
       ansible.builtin.slurp:
         src: "{{ s.path }}/calls"
       register: upgraded
+
+    - name: Missing source directory fails with the spec named
+      vars:
+        _pkg_mgr: uv
+        _pkg_names: ["{{ s.path }}/nope"]
+      block:
+        - name: Converge
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: converge/uv
+        - name: Must not get here
+          ansible.builtin.fail:
+            msg: converge accepted a missing source directory
+      rescue:
+        - name: Message names the spec
+          ansible.builtin.assert:
+            that:
+              - "'is not an existing directory' in ansible_failed_result.msg"
+              - "(s.path ~ '/nope') in ansible_failed_result.msg"
+
+    - name: Pinned spec is rejected
+      vars:
+        tenon_packages: {uv: ["ruff==0.5"]}
+        tenon_package_managers: []
+      block:
+        - name: Validate
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: main
+        - name: Must not get here
+          ansible.builtin.fail:
+            msg: validation accepted a pinned spec
+      rescue:
+        - name: Message explains
+          ansible.builtin.assert:
+            that: "'no version pins or extras' in ansible_failed_result.results[0].msg"
+
+    - name: Extras spec is rejected
+      vars:
+        tenon_packages: {uv: ["ruff[x]"]}
+        tenon_package_managers: []
+      block:
+        - name: Validate
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: main
+        - name: Must not get here
+          ansible.builtin.fail:
+            msg: validation accepted an extras spec
+      rescue:
+        - name: Message explains
+          ansible.builtin.assert:
+            that: "'no version pins or extras' in ansible_failed_result.results[0].msg"
 
     - name: Assert
       vars:

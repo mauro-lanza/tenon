@@ -16,6 +16,7 @@
 #                       flatpak: flathub app ids, user installation
 #                       uv:      `uv tool install` targets: a PyPI name,
 #                                `name@git+https://…`, or an absolute directory
+#                                (no version pins or extras)
 #                                (written `{{ tenon_layer_cache }}/<this layer>`
 #                                for a source inside the layer). A directory is
 #                                reinstalled when a file in it is newer than the
