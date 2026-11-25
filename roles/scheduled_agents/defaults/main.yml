@@ -5,12 +5,13 @@
 # Layers may write this list; `drift_correction_` is reserved only for the
 # engine's own agents, and a layer could already ship an executable and a plist.
 #
-# Entry schema (label, program, hour, minute required):
+# Entry schema (label, program, and hour+minute or keep_alive required):
 #   - label: com.example.job          # also names the plist and its logs
 #     program: /path/to/executable
 #     args: ["--flag"]                # optional
 #     hour: 8                         # 0-23
 #     minute: 30                      # 0-59
+#     keep_alive: true                # instead of hour/minute: start at login, restart on exit
 #     enabled: true                   # optional, default true
 #     requires_capability: some-id    # optional; skipped unless active
 scheduled_agents: []

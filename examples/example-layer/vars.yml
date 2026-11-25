@@ -105,6 +105,7 @@ repositories:
 #     args: [--quiet]
 #     hour: 8
 #     minute: 30
+#     keep_alive: true           # instead of hour/minute: runs at login, relaunched if it exits
 #     enabled: true              # optional, default true
 #     requires_capability: example-tidy   # optional
 

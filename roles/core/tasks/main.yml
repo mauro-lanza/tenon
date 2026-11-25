@@ -330,10 +330,17 @@
         {%- endfor -%}
       {%- endfor -%}
       {{ ns.out }}
-    # Flattened list of config deploys ({src, dest, executable?}) from active caps.
+    # Flattened list of config deploys ({src, dest, executable?, platform?}) from
+    # active caps; an entry naming another platform is dropped.
     tenon_config_deploys: >-
-      {{ _active_entries | selectattr('config', 'defined')
-         | map(attribute='config') | flatten | list }}
+      {%- set ns = namespace(out=[]) -%}
+      {%- for c in _active_entries | selectattr('config', 'defined')
+                   | map(attribute='config') | flatten -%}
+        {%- if c.platform is not defined or c.platform == tenon_platform.name -%}
+          {%- set ns.out = ns.out + [c] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
     # Post-setup reminder strings contributed by active capabilities.
     tenon_reminders: >-
       {{ _active_entries | selectattr('reminders', 'defined')

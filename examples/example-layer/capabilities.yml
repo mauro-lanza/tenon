@@ -27,7 +27,10 @@
 #                     one is selected earlier in the run or already present
 #   config:           (optional) files/templates deployed when the capability is
 #                     active (highest-priority layer supplies the file):
-#                       - { src: <lookup key>, dest: <path>, executable: bool }
+#                       - { src: <lookup key>, dest: <path>, executable: bool,
+#                           platform: Darwin|Linux }
+#                     `platform` (optional) deploys the entry on that platform
+#                     only; an entry for the other one is skipped entirely.
 #                     `src` is written WITHOUT any .j2 suffix: templates/<src>.j2
 #                     wins if it exists, else files/<src> is copied verbatim.
 #                     `executable: true` deploys 0755 (for files on PATH). The

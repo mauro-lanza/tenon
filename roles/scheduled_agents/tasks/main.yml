@@ -32,13 +32,17 @@
     that:
       - agent.label is defined and agent.label | length > 0
       - agent.program is defined and agent.program | length > 0
-      - agent.hour is defined and (agent.hour | int) >= 0 and (agent.hour | int) <= 23
-      - agent.minute is defined and (agent.minute | int) >= 0 and (agent.minute | int) <= 59
+      - _keep_alive != (agent.hour is defined or agent.minute is defined)
+      - _keep_alive or (agent.hour is defined and (agent.hour | int) >= 0 and (agent.hour | int) <= 23)
+      - _keep_alive or (agent.minute is defined and (agent.minute | int) >= 0 and (agent.minute | int) <= 59)
     fail_msg: >-
       Invalid scheduled_agents entry: {{ agent }}. Requires `label`, `program`,
-      `hour` (0-23) and `minute` (0-59). A malformed plist is accepted silently
+      and either `hour` (0-23) with `minute` (0-59), or `keep_alive: true`
+      without them. A malformed plist is accepted silently
       by launchd and simply never fires, so this is checked here instead.
     quiet: true
+  vars:
+    _keep_alive: "{{ agent.keep_alive | default(false) | bool }}"
   loop: "{{ _scheduled_agents_wanted }}"
   loop_control:
     loop_var: agent
@@ -66,7 +70,9 @@
   loop: "{{ _scheduled_agents_wanted }}"
   loop_control:
     loop_var: agent
-    label: "{{ agent.label }} (@ {{ agent.hour }}:{{ '%02d' | format(agent.minute | int) }})"
+    label: >-
+      {{ agent.label }} ({{ 'keep-alive' if agent.keep_alive | default(false) | bool
+      else '@ ' ~ agent.hour ~ ':' ~ '%02d' | format(agent.minute | int) }})
   notify: Reload scheduled user agents
 
 # Turning an agent off must stop it (an orphaned plist stays loaded across

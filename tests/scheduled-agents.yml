@@ -119,6 +119,43 @@
           - not after_third.stat.exists
           - (agents_manifest_empty.content | b64decode) == ''
 
+    - name: Deploy a keep-alive agent
+      ansible.builtin.include_role:
+        name: scheduled_agents
+      vars:
+        home_dir: "{{ agents_home.path }}"
+        scheduled_agents:
+          - {label: com.tenon.test-keep, program: /usr/bin/true, keep_alive: true}
+
+    - name: Read the keep-alive plist
+      ansible.builtin.slurp:
+        src: "{{ agents_home.path }}/Library/LaunchAgents/com.tenon.test-keep.plist"
+      register: keep_plist
+
+    - name: Assert keep-alive renders KeepAlive and no calendar
+      ansible.builtin.assert:
+        that:
+          - "'<key>KeepAlive</key>' in (keep_plist.content | b64decode)"
+          - "'StartCalendarInterval' not in (keep_plist.content | b64decode)"
+          - "'<key>RunAtLoad</key>\\n    <true/>' in (keep_plist.content | b64decode)"
+
+    - name: Reject keep_alive combined with a schedule
+      block:
+        - name: Deploy the invalid agent
+          ansible.builtin.include_role:
+            name: scheduled_agents
+          vars:
+            home_dir: "{{ agents_home.path }}"
+            scheduled_agents:
+              - {label: com.tenon.test-both, program: /usr/bin/true, keep_alive: true, hour: 1, minute: 0}
+        - name: Unreachable when validation works
+          ansible.builtin.fail:
+            msg: keep_alive plus hour/minute was accepted
+      rescue:
+        - name: Assert the failure came from validation
+          ansible.builtin.assert:
+            that: "'Invalid scheduled_agents entry' in (ansible_failed_result | string)"
+
     - name: Clean up the scratch HOME
       ansible.builtin.file:
         path: "{{ agents_home.path }}"

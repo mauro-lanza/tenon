@@ -20,6 +20,13 @@
 {% endfor %}
     </array>
 
+{% if agent.keep_alive | default(false) | bool %}
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+{% else %}
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -30,6 +37,7 @@
 
     <key>RunAtLoad</key>
     <false/>
+{% endif %}
 
     <key>StandardOutPath</key>
     <string>{{ scheduled_agents_log_dir }}/{{ agent.label }}.stdout.log</string>

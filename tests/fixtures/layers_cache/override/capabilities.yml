@@ -19,6 +19,8 @@ capabilities:
     desc: "dbt (BigQuery profile)"
     config:
       - {src: profiles.yml, dest: "/tmp/cs-contract/dbt-profiles.yml"}
+      - {src: Darwin-only, dest: "/tmp/cs-contract/Darwin-only", platform: Darwin}
+      - {src: Linux-only, dest: "/tmp/cs-contract/Linux-only", platform: Linux}
   # `extensions:` is keyed by the layer's extension manager, not a package
   # manager. Asserted by identity, not just "== {}", which would pass even if
   # the derivation returned nothing.

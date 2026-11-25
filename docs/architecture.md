@@ -146,6 +146,11 @@ this with `vars/<platform>.yml`, merged after `vars.yml` on that platform only;
 a template reads a plain value (`zsh_theme`) instead of testing which platform
 it is on. `check.sh` renders the runner once per profile and checks each.
 
+A capability's `config:` entry may carry `platform: Darwin|Linux` for files that
+only make sense on one OS (a macOS app bundle). `core` drops the other
+platform's entries when it flattens `tenon_config_deploys`, so they are neither
+deployed, recorded in the manifest nor reported as drift.
+
 **Package managers are detected, not declared.** `core` stats the profile's
 candidate managers (macOS: `brew`, `cask`, `uv`; Linux: `pacman`, `aur` via paru,
 `flatpak`, `uv`) into `tenon_package_managers`, then resolves

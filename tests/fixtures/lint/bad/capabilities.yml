@@ -34,6 +34,10 @@ capabilities:
     desc: "config entry missing dest"
     config:
       - {src: scripts/thing3}
+  - id: badplatform
+    desc: "config platform that names no platform"
+    config:
+      - {src: scripts/thing4, dest: /tmp/thing4, platform: Windows}
   # A src matching no files/ or templates/ entry is silently skipped at deploy.
   - id: nosrc
     desc: "config src resolves to nothing"

@@ -169,10 +169,13 @@
           # Config deploys are the config bundles of ACTIVE capabilities, in
           # capability order (zed at pos 3, dbt at pos 5; vscode declares no
           # `config:` — editor settings come from its extension_managers entry).
-          - tenon_config_deploys | length == 2
+          # `platform:` entries for the other platform are dropped (dbt declares
+          # one Darwin-only and one Linux-only entry).
+          - tenon_config_deploys | length == 3
           - tenon_config_deploys[0].src == 'zed/settings.json'
           - tenon_config_deploys[0].dest == '/tmp/cs-contract/zed-settings.json'
           - tenon_config_deploys[1].src == 'profiles.yml'
+          - tenon_config_deploys[2].src == tenon_platform.name ~ '-only'
           # `executable: true` -> 0755. Without it the mode is UNMANAGED, so an
           # existing destination keeps the mode it already had (0600 here) and
           # content-identical redeploys never register as drift.

@@ -397,6 +397,11 @@ lint_layers() {
         # "boolean", which would match nothing and pass everything.
         done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select([.config[]? | select(has("executable")) | select(.executable | type != "!!bool")] | length > 0) | .id')"
 
+        while IFS= read -r ref; do
+            [[ -z "$ref" ]] && continue
+            lint_err "[$name] capability '$ref' config: has a platform: that is not Darwin or Linux"
+        done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select([.config[]? | select(has("platform")) | select((.platform | type) != "!!str" or (.platform | test("^(Darwin|Linux)$") | not))] | length > 0) | .id')"
+
         # config[].src -> a file in files/ or templates/; an unresolved src is
         # silently skipped at deploy time
         while IFS= read -r ref; do

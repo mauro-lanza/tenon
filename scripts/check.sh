@@ -1060,6 +1060,7 @@ for expect in \
     "has a config: entry missing src: or dest:" \
     "config: uses mode:" \
     "config: has a non-boolean executable:" \
+    "config: has a platform: that is not Darwin or Linux" \
     "shell_config_files key 'no-such-shell-file' matches no files/" \
     "config src 'no-such-config-file' matches no files/"
 do
@@ -1068,7 +1069,7 @@ do
         exit 1
     fi
 done
-echo "  ok  all 16 broken references rejected"
+echo "  ok  all 17 broken references rejected"
 
 # One malformed file is one error, not one per projection read from it.
 malformed_count="$(grep -cF "malformed/capabilities.yml is not valid YAML" <<<"$lint_out" || true)"
