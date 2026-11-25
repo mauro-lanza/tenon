@@ -1,20 +1,20 @@
 ---
 - name: Check for a per-machine repository override
   ansible.builtin.stat:
-    path: "{{ computer_setup_repositories_override_file }}"
+    path: "{{ tenon_repositories_override_file }}"
   register: repositories_override_stat
 
 # Loaded into a namespaced var so the user-facing key stays the natural
 # `repositories:` without clobbering the merged layer value before we choose to.
 - name: Load the per-machine repository override
   ansible.builtin.include_vars:
-    file: "{{ computer_setup_repositories_override_file }}"
+    file: "{{ tenon_repositories_override_file }}"
     name: repositories_override
   when: repositories_override_stat.stat.exists
 
 # `default(x, true)` throughout: a bare `repositories:` key parses to None, which
 # is DEFINED, so plain `default()` would not fire and `| length` below aborts the
-# role. `computer-setup repos` emits exactly that on a machine with no checkouts yet.
+# role. `tenon repos` emits exactly that on a machine with no checkouts yet.
 - name: Resolve the effective repository list
   ansible.builtin.set_fact:
     repositories: >-
@@ -25,8 +25,8 @@
   ansible.builtin.debug:
     msg: >-
       No repositories to clone. Add entries via a content layer's vars.yml
-      (`repositories:`), to {{ computer_setup_repositories_override_file }} (see
-      repositories.example.yml), or run `computer-setup repos` to scaffold one.
+      (`repositories:`), to {{ tenon_repositories_override_file }} (see
+      repositories.example.yml), or run `tenon repos` to scaffold one.
   when: repositories | length == 0
 
 - name: Ensure the base projects directory exists

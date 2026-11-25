@@ -1,8 +1,8 @@
 ---
-# Drives the computer_setup_state callback plugin so its output can be asserted.
+# Drives the tenon_state callback plugin so its output can be asserted.
 #
 # Deliberately standalone: no layer machinery, no core role. This is a test of
-# the RUN-STATE CONTRACT — the JSON shape `computer-setup status` reads and any
+# the RUN-STATE CONTRACT — the JSON shape `tenon status` reads and any
 # UI would consume — not of the engine's layer merge, which contract.yml covers.
 #
 # The file content below is a canary. The plugin records metadata only, so this

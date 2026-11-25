@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.." || exit 1
 REPO_ROOT="$PWD"
 
 # Source bootstrap.sh for its functions without running the installer.
-export COMPUTER_SETUP_BOOTSTRAP_LIB=1
+export TENON_BOOTSTRAP_LIB=1
 # shellcheck source=bootstrap.sh
 source "$REPO_ROOT/bootstrap.sh"
 # bootstrap.sh sets -e; the harness needs to inspect failures rather than die.
@@ -242,7 +242,7 @@ assert_eq "empty selection still writes a valid selected_capabilities list" \
 # higher-priority definition must win, as in the engine.
 echo "==> bootstrap capability merge"
 (
-    CS_OS=Darwin
+    TENON_OS=Darwin
     LAYER_CACHE="$REPO_ROOT/tests/fixtures/layers_cache"
     MACHINE_FILE="$REPO_ROOT/tests/fixtures/machine.yml"
     load_capabilities >/dev/null 2>&1
@@ -261,7 +261,7 @@ echo "==> bootstrap platform filtering"
 # Prints "<offered ids>|<hidden ids>" for one platform.
 offered_on() {
     (
-        CS_OS="$1"
+        TENON_OS="$1"
         LAYER_CACHE="${2:-$REPO_ROOT/tests/fixtures/layers_cache}"
         MACHINE_FILE="${3:-$REPO_ROOT/tests/fixtures/machine.yml}"
         load_capabilities >/dev/null 2>&1
@@ -323,12 +323,12 @@ assert_eq "Darwin offers the cask one and the config-only one" \
 # Hidden `cask` is a prefix of the offered `caskapp`: matching is by whole id.
 assert_eq "an option implying caskapp survives hiding its prefix id cask (Darwin)" "a" \
     "$(
-        CS_OS=Darwin LAYER_CACHE="$FILTER_CACHE" MACHINE_FILE="$WORK/filter-machine.yml"
+        TENON_OS=Darwin LAYER_CACHE="$FILTER_CACHE" MACHINE_FILE="$WORK/filter-machine.yml"
         load_capabilities >/dev/null 2>&1; load_questions >/dev/null 2>&1
         awk -F"$FS_U" '$1=="prefix"{print $5}' "$MERGED_QUESTIONS_FILE"
     )"
 (
-    CS_OS=Linux
+    TENON_OS=Linux
     LAYER_CACHE="$FILTER_CACHE"
     MACHINE_FILE="$WORK/filter-machine.yml"
     load_capabilities >/dev/null 2>&1
@@ -591,7 +591,7 @@ assert_eq "run_playbook passes the repo, branch, pull dir and repo URL to ansibl
        printf '%s|%s|%s|%s' \
         "$([[ "$l" == "-U $REPO_URL -C $REPO_BRANCH "* ]] && echo 1)" \
         "$([[ "$l" == *"-d $PULL_DIR "* ]] && echo 1)" \
-        "$([[ "$l" == *"-e computer_setup_repo_url=$REPO_URL"* ]] && echo 1)" \
+        "$([[ "$l" == *"-e tenon_repo_url=$REPO_URL"* ]] && echo 1)" \
         "$([[ "$l" == *" local.yml" ]] && echo 1)")"
 
 # ── 13. load_questions merges layers by descending priority, dedup by id ─────
@@ -820,14 +820,14 @@ assert_eq "bash <(curl ...) trusts no directory" "" \
 # from here must still refuse, because nothing was passed to verify.
 DECOY="$WORK/decoy"
 mkdir -p "$DECOY/scripts"
-touch "$DECOY/local.yml" "$DECOY/scripts/computer-setup-layers" "$DECOY/requirements.yml"
+touch "$DECOY/local.yml" "$DECOY/scripts/tenon-layers" "$DECOY/requirements.yml"
 assert_eq "a lookalike \$PWD is not adopted when piped" "" \
     "$(cd "$DECOY" && resolve_script_dir "")"
 
 # A directory missing either marker is not a checkout, however suggestive.
 HALF="$WORK/half"
 mkdir -p "$HALF/scripts"
-touch "$HALF/scripts/computer-setup-layers"
+touch "$HALF/scripts/tenon-layers"
 assert_eq "a directory without local.yml is not a checkout" "" \
     "$(resolve_script_dir "$HALF/bootstrap.sh")"
 
@@ -837,16 +837,16 @@ assert_eq "a directory without local.yml is not a checkout" "" \
 echo "==> bootstrap owner override"
 fork="$(BOOTSTRAP_OWNER=acme BOOTSTRAP_BRANCH=v9 bash -c 'source "$1"; printf "%s|%s" "$REPO_URL" "$RAW_BASE"' _ "$REPO_ROOT/bootstrap.sh")"
 assert_eq "a fork owner and ref reach every URL" \
-    "git@github.com:acme/computer-setup.git|https://raw.githubusercontent.com/acme/computer-setup/v9" "$fork"
+    "git@github.com:acme/tenon.git|https://raw.githubusercontent.com/acme/tenon/v9" "$fork"
 # shellcheck disable=SC2016 # the single-quoted program is for the inner bash, which expands it
 dflt="$(env -u BOOTSTRAP_OWNER -u BOOTSTRAP_BRANCH bash -c 'source "$1"; printf "%s" "$REPO_URL"' _ "$REPO_ROOT/bootstrap.sh")"
-assert_eq "no override keeps the default owner" "git@github.com:mauro-lanza/computer-setup.git" "$dflt"
+assert_eq "no override keeps the default owner" "git@github.com:mauro-lanza/tenon.git" "$dflt"
 # The value must also reach the play, or the scheduled agents would keep following the original repo.
 # shellcheck disable=SC2016 # a literal pattern: the ${...} must NOT expand here
-if grep -qF -- '-e "computer_setup_repo_url=${REPO_URL}"' "$REPO_ROOT/bootstrap.sh"; then
+if grep -qF -- '-e "tenon_repo_url=${REPO_URL}"' "$REPO_ROOT/bootstrap.sh"; then
     pass "the repo URL is passed to the play"
 else
-    fail "the repo URL is passed to the play" "extra_args lost computer_setup_repo_url"
+    fail "the repo URL is passed to the play" "extra_args lost tenon_repo_url"
 fi
 
 echo

@@ -7,7 +7,7 @@
     state: present
   vars:
     _taps: >-
-      {{ (_pkg_names + computer_setup_packages.get('cask', []))
+      {{ (_pkg_names + tenon_packages.get('cask', []))
          | select('match', '^[^/]+/[^/]+/[^/]+$')
          | map('regex_replace', '^([^/]+/[^/]+)/.*$', '\1') | unique | list }}
   when: _taps | length > 0

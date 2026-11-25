@@ -47,8 +47,8 @@ pre-caching with `sudo -v` (the ticket is not usable from the task's context).
 
 The fix is an askpass helper, which `community.general.homebrew_cask` implements:
 given `sudo_password` it writes a 0700 temp askpass script and exports
-`SUDO_ASKPASS`, so Homebrew invokes `sudo -A`. `computer-setup upgrade` collects
-the password in your shell and passes it via the `CS_SUDO_PASSWORD` environment
+`SUDO_ASKPASS`, so Homebrew invokes `sudo -A`. `tenon upgrade` collects
+the password in your shell and passes it via the `TENON_SUDO_PASSWORD` environment
 variable — never `-e`, which would expose it in the process list. Press Enter at
 the prompt to skip those casks.
 
@@ -185,7 +185,7 @@ no API round trip at all. The daily round trip it replaced bought nothing —
 ### They cannot answer sudo prompts
 
 This is why the 09:00 agent runs with
-`computer_setup_upgrade_include_casks=false`: formulae, Galaxy collections and
+`tenon_upgrade_include_casks=false`: formulae, Galaxy collections and
 Node all live under `homebrew_prefix` and never need `sudo`, whereas cask
 upgrades replace bundles in `/Applications`. Do the initial cask installs
 interactively; once the apps are brew-managed, later runs see them as present and
@@ -212,7 +212,7 @@ correct for the `repositories` role and reads fine in every YAML file.
 
 Baked into a shell script it is not. `~` does not expand inside a quoted
 assignment, so `REPOS_BASE_DIR="~/Projects"` is a literal directory name that
-cannot exist. This broke `computer-setup repos` silently for as long as the
+cannot exist. This broke `tenon repos` silently for as long as the
 answer had a tilde, and would have made the branch-cleanup agent exit 1 every
 morning into a log nobody opens.
 

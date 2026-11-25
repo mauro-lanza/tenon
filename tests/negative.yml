@@ -3,8 +3,8 @@
 # initializes cleanly or fails on a guard. Point it at a fixture set with -e:
 #
 #   ansible-playbook tests/negative.yml \
-#     -e computer_setup_layer_cache=tests/fixtures/negative/reserved/layers_cache \
-#     -e computer_setup_machine_file=tests/fixtures/negative/reserved/machine.yml
+#     -e tenon_layer_cache=tests/fixtures/negative/reserved/layers_cache \
+#     -e tenon_machine_file=tests/fixtures/negative/reserved/machine.yml
 #
 # scripts/check.sh asserts these FAIL. Reserved-key enforcement and
 # schema_version rejection are both documented as guarantees and both had zero
@@ -19,9 +19,9 @@
     # Mirrors local.yml — layer `repositories:` entries template against it.
     repositories_base_dir: "{{ ansible_facts['env']['HOME'] }}/Projects"
     homebrew_prefix: /opt/homebrew
-    computer_setup_machine_file: "{{ playbook_dir }}/fixtures/machine.yml"
-    computer_setup_schema_version: 2
+    tenon_machine_file: "{{ playbook_dir }}/fixtures/machine.yml"
+    tenon_schema_version: 2
   tasks:
-    - name: Initialize computer-setup orchestration
+    - name: Initialize tenon orchestration
       ansible.builtin.import_role:
         name: core

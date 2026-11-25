@@ -10,7 +10,7 @@
     name: "{{ item }}"
     state: present
     install_options: "{{ 'adopt' if item in packages_cask_adopt else omit }}"
-    sudo_password: "{{ lookup('env', 'CS_SUDO_PASSWORD') | default(omit, true) }}"
+    sudo_password: "{{ lookup('env', 'TENON_SUDO_PASSWORD') | default(omit, true) }}"
   loop: "{{ _pkg_names }}"
   loop_control:
     label: "{{ item }}"

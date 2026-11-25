@@ -25,7 +25,7 @@ jobs:
           py="$(yq -r '.python' runtime.yml)"
           core="$(yq -r '.ansible_core' runtime.yml)"
           mitogen="$(yq -r '.mitogen' runtime.yml)"
-          rt="$HOME/.local/share/computer-setup/runtime"
+          rt="$HOME/.local/share/tenon/runtime"
           uv python install "$py"
           UV_TOOL_DIR="$rt/tools" UV_TOOL_BIN_DIR="$rt/bin" \
             uv tool install --force --python "$py" --with "mitogen==${mitogen}" "ansible-core==${core}"

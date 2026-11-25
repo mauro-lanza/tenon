@@ -1,7 +1,7 @@
 ---
 # Every entry here is a cross-reference that fails SILENTLY at runtime: the id is
 # looked up in the merged registry, is not found, and the reference is skipped
-# with no error. `computer-setup-layers lint` exists to make each one loud.
+# with no error. `tenon-layers lint` exists to make each one loud.
 capabilities:
   # Two entries with one id: the merge collapses them to whichever it reaches
   # last, so one of these silently does not exist.

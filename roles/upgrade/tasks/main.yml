@@ -1,8 +1,8 @@
 ---
 # Opt-in upgrade path, gated behind the `upgrade`/`never` tags in local.yml so
-# the daily drift check and normal `computer-setup apply` never run it. Trigger with
-# `computer-setup upgrade`, which confirms in your terminal then runs this with
-# `-e computer_setup_upgrade_assume_yes=true`.
+# the daily drift check and normal `tenon apply` never run it. Trigger with
+# `tenon upgrade`, which confirms in your terminal then runs this with
+# `-e tenon_upgrade_assume_yes=true`.
 #
 # Without that flag every step only PREVIEWS, so a scheduled run can never
 # upgrade. Confirmation lives in the shell function (a guaranteed TTY) rather
@@ -14,7 +14,7 @@
 
 - name: Refresh the Ansible Galaxy collections
   when:
-    - computer_setup_upgrade_assume_yes | bool
+    - tenon_upgrade_assume_yes | bool
     - not ansible_check_mode
   block:
     # KEEP THIS FIRST. The package upgrades below run community.general modules,
@@ -37,7 +37,7 @@
     - name: Update Ansible Galaxy collections
       ansible.builtin.command:
         argv: >-
-          {{ [computer_setup_runtime_bin ~ '/ansible-galaxy', 'collection', 'install', '-r',
+          {{ [tenon_runtime_bin ~ '/ansible-galaxy', 'collection', 'install', '-r',
               playbook_dir ~ '/requirements.yml', '--clear-response-cache']
              + (['--upgrade'] if _core_changed | bool else []) }}
       vars:
@@ -56,7 +56,7 @@
         # here and 0700 in drift_correction: the 09:00 upgrade set one mode and
         # the 10:00 check reported drift on it, every day, invisibly.
         # Same expression everywhere means a divergence is greppable.
-        path: "{{ computer_setup_state_dir }}"
+        path: "{{ tenon_state_dir }}"
         state: directory
         mode: "0700"
 
@@ -77,7 +77,7 @@
 
 - name: Upgrade Node.js via nvm
   when:
-    - computer_setup_upgrade_assume_yes | bool
+    - tenon_upgrade_assume_yes | bool
     - not ansible_check_mode
     - upgrade_nvm_enabled | bool
   block:
@@ -106,11 +106,11 @@
       Also refreshed to latest on apply (not pre-diffable): Ansible Galaxy
       collections{{ ', Node.js ' ~ upgrade_nvm_node if upgrade_nvm_enabled | bool else '' }}.
   vars:
-    _applied: "{{ (computer_setup_upgrade_assume_yes | bool) and not ansible_check_mode }}"
+    _applied: "{{ (tenon_upgrade_assume_yes | bool) and not ansible_check_mode }}"
     _preview_note: >-
-      Preview only — no upgrades applied. Run `computer-setup upgrade` to upgrade
+      Preview only — no upgrades applied. Run `tenon upgrade` to upgrade
       (it confirms in your terminal first), or pass
-      `-e computer_setup_upgrade_assume_yes=true` to apply non-interactively.
+      `-e tenon_upgrade_assume_yes=true` to apply non-interactively.
 
 - name: Report casks that failed to upgrade
   ansible.builtin.fail:

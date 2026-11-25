@@ -5,15 +5,15 @@
   gather_facts: true
   vars:
     home_dir: "{{ ansible_facts['env']['HOME'] }}"
-    computer_setup_layer_cache: "{{ playbook_dir }}/fixtures/layers_cache"
-    computer_setup_machine_file: "{{ playbook_dir }}/fixtures/machine.yml"
-    computer_setup_schema_version: 2
+    tenon_layer_cache: "{{ playbook_dir }}/fixtures/layers_cache"
+    tenon_machine_file: "{{ playbook_dir }}/fixtures/machine.yml"
+    tenon_schema_version: 2
     # Deterministic on any host: brew "present", pacman absent.
-    computer_setup_package_manager_probes:
+    tenon_package_manager_probes:
       brew: "{{ playbook_dir }}/contract.yml"
       pacman: /nonexistent/pacman
   pre_tasks:
-    - name: Initialize computer-setup orchestration
+    - name: Initialize tenon orchestration
       ansible.builtin.import_role:
         name: core
       tags: [always]
@@ -28,8 +28,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: contract.txt
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/nested/contract.txt"
+        tenon_lookup_key: contract.txt
+        tenon_deploy_dest: "{{ contract_scratch.path }}/nested/contract.txt"
 
     - name: Deploy a key promoted from a file to a template
       # `promoted.conf` is supplied as files/promoted.conf by the HIGHER-priority
@@ -40,8 +40,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: promoted.conf
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/nested/promoted.conf"
+        tenon_lookup_key: promoted.conf
+        tenon_deploy_dest: "{{ contract_scratch.path }}/nested/promoted.conf"
 
     - name: Deploy fixture template via the engine primitive
       # The key never carries the .j2 suffix: `contract.out` resolves
@@ -50,8 +50,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: contract.out
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/nested/contract.out"
+        tenon_lookup_key: contract.out
+        tenon_deploy_dest: "{{ contract_scratch.path }}/nested/contract.out"
 
     - name: Deploy an executable
       # `executable: true` is the ONLY way a template lands on PATH runnable:
@@ -60,9 +60,9 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: contract.out
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/nested/contract.bin"
-        computer_setup_deploy_executable: true
+        tenon_lookup_key: contract.out
+        tenon_deploy_dest: "{{ contract_scratch.path }}/nested/contract.bin"
+        tenon_deploy_executable: true
 
     # Mode is unmanaged by default, so a third party that chmods a deployed
     # config file is not reported as drift on every scheduled check forever.
@@ -77,8 +77,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: contract.txt
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/nested/preserved.txt"
+        tenon_lookup_key: contract.txt
+        tenon_deploy_dest: "{{ contract_scratch.path }}/nested/preserved.txt"
 
     - name: Stat the mode assertions
       ansible.builtin.stat:
@@ -94,8 +94,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: no-layer-provides-this.txt
-        computer_setup_deploy_dest: "{{ contract_scratch.path }}/absent/should-not-exist.txt"
+        tenon_lookup_key: no-layer-provides-this.txt
+        tenon_deploy_dest: "{{ contract_scratch.path }}/absent/should-not-exist.txt"
 
     - name: Stat the unprovided destination
       ansible.builtin.stat:
@@ -120,57 +120,57 @@
     - name: Assert layer merge and resolution contract
       ansible.builtin.assert:
         that:
-          - computer_setup_active_layers | map(attribute='name') | list == ['base', 'override']
+          - tenon_active_layers | map(attribute='name') | list == ['base', 'override']
           - contract_list == ['base', 'override']
           - contract_scalar == 'override'
           # vars/<platform>.yml merges after vars.yml, and only this platform's.
           - contract_platform == ansible_facts['system']
           # Union-by-id: `nvm` exists in both layers; the higher-priority one
           # replaces it wholesale, so the package is override's, not base's.
-          - computer_setup_capability_registry['nvm'].packages.brew == 'nvm-from-override'
-          - "'override wins' in computer_setup_capability_registry['nvm'].desc"
+          - tenon_capability_registry['nvm'].packages.brew == 'nvm-from-override'
+          - "'override wins' in tenon_capability_registry['nvm'].desc"
           # Packages derive from SELECTED capabilities only. 'ghost' is selected
           # but unregistered (silently ignored); 'adopted' is registered and
           # active but never selected, so its package must NOT appear here.
           # Each manager's names land in that manager's list, for every manager.
-          - computer_setup_packages_optional['brew'] == ['nvm-from-override', 'anomalyco/tap/opencode', 'ripgrep']
-          - computer_setup_packages_optional['cask'] == ['zed', 'visual-studio-code']
-          - computer_setup_packages_optional['pacman'] == ['ripgrep', 'only-pacman', 'extra-pacman']
-          - computer_setup_packages_optional['flatpak'] == ['org.example.Rg']
-          - "'aur' not in computer_setup_packages_optional"
+          - tenon_packages_optional['brew'] == ['nvm-from-override', 'anomalyco/tap/opencode', 'ripgrep']
+          - tenon_packages_optional['cask'] == ['zed', 'visual-studio-code']
+          - tenon_packages_optional['pacman'] == ['ripgrep', 'only-pacman', 'extra-pacman']
+          - tenon_packages_optional['flatpak'] == ['org.example.Rg']
+          - "'aur' not in tenon_packages_optional"
           # What gets installed: baseline (appended across layers) + optional,
           # deduplicated, for DETECTED managers only (the probes say brew, not pacman).
-          - computer_setup_packages['brew'] == ['base-formula', 'ripgrep', 'nvm-from-override', 'anomalyco/tap/opencode']
-          - "'pacman' not in computer_setup_packages"
+          - tenon_packages['brew'] == ['base-formula', 'ripgrep', 'nvm-from-override', 'anomalyco/tap/opencode']
+          - "'pacman' not in tenon_packages"
           # Detection follows the probes; a selection no detected manager can
           # install is named, not silently dropped (casks are too, off macOS).
-          - "'brew' in computer_setup_package_managers"
-          - "'pacman' not in computer_setup_package_managers"
-          - "'pacman-only' in computer_setup_uninstallable_selections"
-          - "'ripgrep' not in computer_setup_uninstallable_selections"
-          - "'nvm' not in computer_setup_uninstallable_selections"
-          - "'dbt' not in computer_setup_uninstallable_selections"
+          - "'brew' in tenon_package_managers"
+          - "'pacman' not in tenon_package_managers"
+          - "'pacman-only' in tenon_uninstallable_selections"
+          - "'ripgrep' not in tenon_uninstallable_selections"
+          - "'nvm' not in tenon_uninstallable_selections"
+          - "'dbt' not in tenon_uninstallable_selections"
           # `extensions:` is keyed by extension manager, not package manager.
           # The engine names no editor; 'vscode' here is the layer's manager id.
           - extension_optional.keys() | list == ['vscode']
           - extension_optional['vscode'] == ['johnpapa.vscode-peacock']
           # Gating is capability membership in the active set. 'adopted' is not
           # selected but its adopt_if_present path exists, so it becomes active.
-          - "'nvm' in computer_setup_active_capabilities"
-          - "'zed' in computer_setup_active_capabilities"
-          - "'vscode' in computer_setup_active_capabilities"
-          - "'dbt' in computer_setup_active_capabilities"
-          - "'adopted' in computer_setup_active_capabilities"
+          - "'nvm' in tenon_active_capabilities"
+          - "'zed' in tenon_active_capabilities"
+          - "'vscode' in tenon_active_capabilities"
+          - "'dbt' in tenon_active_capabilities"
+          - "'adopted' in tenon_active_capabilities"
           # A selected-but-unregistered capability is still "active" (a selection),
           # it just contributes no packages/config.
-          - "'ghost' in computer_setup_active_capabilities"
+          - "'ghost' in tenon_active_capabilities"
           # Config deploys are the config bundles of ACTIVE capabilities, in
           # capability order (zed at pos 3, dbt at pos 5; vscode declares no
           # `config:` — editor settings come from its extension_managers entry).
-          - computer_setup_config_deploys | length == 2
-          - computer_setup_config_deploys[0].src == 'zed/settings.json'
-          - computer_setup_config_deploys[0].dest == '/tmp/cs-contract/zed-settings.json'
-          - computer_setup_config_deploys[1].src == 'profiles.yml'
+          - tenon_config_deploys | length == 2
+          - tenon_config_deploys[0].src == 'zed/settings.json'
+          - tenon_config_deploys[0].dest == '/tmp/cs-contract/zed-settings.json'
+          - tenon_config_deploys[1].src == 'profiles.yml'
           # `executable: true` -> 0755. Without it the mode is UNMANAGED, so an
           # existing destination keeps the mode it already had (0600 here) and
           # content-identical redeploys never register as drift.
@@ -179,8 +179,8 @@
           - contract_modes.results[2].stat.mode != '0755'
           # Reminders come from ACTIVE capabilities: 'vscode' is selected, and
           # 'adopted' contributes despite never being selected.
-          - "'Sign into VS Code settings sync' in computer_setup_reminders"
-          - "'Adopted capability reminder' in computer_setup_reminders"
+          - "'Sign into VS Code settings sync' in tenon_reminders"
+          - "'Adopted capability reminder' in tenon_reminders"
           # deploy_layer_file: highest-priority layer wins, parent dir is created
           - (contract_deployed_file.content | b64decode | trim) == 'override file'
           - (contract_deployed_template.content | b64decode | trim) == 'override template'
@@ -191,14 +191,14 @@
             == 'rendered from base: override'
           # ── Questions and answers ──────────────────────────────────────
           # The higher-priority layer's entry for a shared id wins outright.
-          - computer_setup_question_registry['editor'].desc == 'Default editor (override)'
+          - tenon_question_registry['editor'].desc == 'Default editor (override)'
           # A stored answer is used...
-          - computer_setup_answers['editor'] == 'picked'
+          - tenon_answers['editor'] == 'picked'
           # ...an unanswered question falls back to its declared default...
-          - computer_setup_answers['unanswered'] == 'fallback-value'
+          - tenon_answers['unanswered'] == 'fallback-value'
           # ...and an answer to a question no layer declares is DROPPED, rather
           # than carried into play scope as a phantom var.
-          - "'phantom' not in computer_setup_answers"
+          - "'phantom' not in tenon_answers"
           # The chosen option's `set:` payload reached play scope.
           - contract_editor_cmd == 'from-override-option'
           # A question-level `set_var:` assigns the raw answer.
@@ -206,8 +206,8 @@
           # `implies:` is the generic dependency edge, replacing requires_vscode.
           - "'implied-cap' in selected_capabilities"
           # A selection no layer declares is reported.
-          - computer_setup_unknown_selections == ['ghost']
-          - "'implied-cap' in computer_setup_active_capabilities"
+          - tenon_unknown_selections == ['ghost']
+          - "'implied-cap' in tenon_active_capabilities"
           # ORDERING, both directions. A layer var templates against an answer
           # (answers applied BEFORE the merge)...
           - contract_repo_path == '/tmp/contract-repos/thing'
@@ -226,7 +226,7 @@
           - git_user_email == 'layer-default@example.com'
           # `validate` is registered so the engine can re-check a hand-edited
           # machine.yml, not just the bootstrap prompt.
-          - computer_setup_question_registry['git-email'].validate is defined
+          - tenon_question_registry['git-email'].validate is defined
           # An unprovided key deploys nothing and does not create the parent dir.
           # This runs AFTER several successful deploys, so it also asserts the
           # primitive resets its resolution state between invocations rather than

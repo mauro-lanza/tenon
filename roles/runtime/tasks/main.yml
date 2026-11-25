@@ -2,14 +2,14 @@
 # Converges the engine runtime on runtime.yml; runs under the runtime it manages, so the current run finishes on the old version.
 - name: Ensure the runtime directory exists
   ansible.builtin.file:
-    path: "{{ computer_setup_runtime_dir }}"
+    path: "{{ tenon_runtime_dir }}"
     state: directory
     mode: "0755"
 
 # Read-only probes; see "Probes under --check" in docs/architecture.md.
 - name: Read the interpreters uv has installed
   ansible.builtin.command:
-    argv: ["{{ computer_setup_platform.uv_bin }}", "python", "list", "--only-installed"]
+    argv: ["{{ tenon_platform.uv_bin }}", "python", "list", "--only-installed"]
   register: runtime_pythons
   changed_when: false
   failed_when: false
@@ -18,7 +18,7 @@
 - name: Read the installed mitogen version
   ansible.builtin.command:
     argv:
-      - "{{ computer_setup_runtime_tools }}/ansible-core/bin/python"
+      - "{{ tenon_runtime_tools }}/ansible-core/bin/python"
       - -c
       # mitogen.__version__ is a tuple; normalised here because Jinja cannot compare it against the pin.
       - "import mitogen; print('.'.join(str(p) for p in mitogen.__version__))"
@@ -29,7 +29,7 @@
 
 - name: Read the installed ansible-core version
   ansible.builtin.command:
-    argv: ["{{ computer_setup_runtime_bin }}/ansible", "--version"]
+    argv: ["{{ tenon_runtime_bin }}/ansible", "--version"]
   register: runtime_installed
   changed_when: false
   failed_when: false
@@ -39,34 +39,34 @@
   ansible.builtin.set_fact:
     # uv names them `cpython-<version>-<platform>`; matching on the minor keeps uv's stable path across patches.
     runtime_python_missing: >-
-      {{ ('cpython-' ~ computer_setup_runtime_pins.python) not in (runtime_pythons.stdout | default('')) }}
+      {{ ('cpython-' ~ tenon_runtime_pins.python) not in (runtime_pythons.stdout | default('')) }}
     runtime_core_wrong: >-
-      {{ ('core ' ~ computer_setup_runtime_pins.ansible_core ~ ']') not in (runtime_installed.stdout | default('')) }}
+      {{ ('core ' ~ tenon_runtime_pins.ansible_core ~ ']') not in (runtime_installed.stdout | default('')) }}
     runtime_mitogen_wrong: >-
-      {{ computer_setup_runtime_pins.mitogen != (runtime_mitogen.stdout | default('') | trim) }}
+      {{ tenon_runtime_pins.mitogen != (runtime_mitogen.stdout | default('') | trim) }}
 
 # ─── Converge ────────────────────────────────────────────────────────────────
 - name: Install the pinned Python
   ansible.builtin.command:
-    argv: ["{{ computer_setup_platform.uv_bin }}", "python", "install", "{{ computer_setup_runtime_pins.python }}"]
+    argv: ["{{ tenon_platform.uv_bin }}", "python", "install", "{{ tenon_runtime_pins.python }}"]
   changed_when: true
   when: runtime_python_missing | bool
 
 - name: Install or re-pin the engine runtime
   ansible.builtin.command:
     argv:
-      - "{{ computer_setup_platform.uv_bin }}"
+      - "{{ tenon_platform.uv_bin }}"
       - tool
       - install
       - --force
       - --python
-      - "{{ computer_setup_runtime_pins.python }}"
+      - "{{ tenon_runtime_pins.python }}"
       - --with
-      - "mitogen=={{ computer_setup_runtime_pins.mitogen }}"
-      - "ansible-core=={{ computer_setup_runtime_pins.ansible_core }}"
+      - "mitogen=={{ tenon_runtime_pins.mitogen }}"
+      - "ansible-core=={{ tenon_runtime_pins.ansible_core }}"
   environment:
-    UV_TOOL_DIR: "{{ computer_setup_runtime_tools }}"
-    UV_TOOL_BIN_DIR: "{{ computer_setup_runtime_bin }}"
+    UV_TOOL_DIR: "{{ tenon_runtime_tools }}"
+    UV_TOOL_BIN_DIR: "{{ tenon_runtime_bin }}"
   changed_when: true
   when: (runtime_core_wrong | bool) or (runtime_mitogen_wrong | bool)
 
@@ -75,9 +75,9 @@
   ansible.builtin.debug:
     msg: >-
       Engine runtime differs from runtime.yml
-      (want python {{ computer_setup_runtime_pins.python }}, ansible-core {{ computer_setup_runtime_pins.ansible_core }},
-      mitogen {{ computer_setup_runtime_pins.mitogen }}).
-      Reconcile with `computer-setup apply --tags runtime`.
+      (want python {{ tenon_runtime_pins.python }}, ansible-core {{ tenon_runtime_pins.ansible_core }},
+      mitogen {{ tenon_runtime_pins.mitogen }}).
+      Reconcile with `tenon apply --tags runtime`.
   changed_when: true
   when:
     - ansible_check_mode

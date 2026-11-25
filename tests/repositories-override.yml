@@ -9,7 +9,7 @@
   gather_facts: false
   vars:
     repositories_base_dir: "{{ repo_scratch }}/base"
-    computer_setup_config_dir: "{{ repo_scratch }}/cfg"
+    tenon_config_dir: "{{ repo_scratch }}/cfg"
     repositories:
       - {folder: layer, remote: "{{ repo_scratch }}/src", active: false}
     _override_content:
@@ -21,7 +21,7 @@
     - name: Write the override file
       ansible.builtin.copy:
         content: "{{ _override_content[repo_case] }}"
-        dest: "{{ computer_setup_config_dir }}/repositories.yml"
+        dest: "{{ tenon_config_dir }}/repositories.yml"
         mode: "0644"
       when: repo_case != 'none'
 

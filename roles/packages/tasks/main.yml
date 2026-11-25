@@ -10,18 +10,18 @@
       '{{ item }}' is not a valid package name. Check the layers'
       packages_baseline and the capabilities' `packages:` mappings.
     quiet: true
-  loop: "{{ computer_setup_packages.values() | flatten }}"
+  loop: "{{ tenon_packages.values() | flatten }}"
 
 # Profile order, so e.g. pacman runs before aur (an AUR package's repo
 # dependencies are then already present).
 - name: Converge each package manager
   ansible.builtin.include_tasks: "converge/{{ _pkg_mgr }}.yml"
-  loop: "{{ computer_setup_package_managers }}"
+  loop: "{{ tenon_package_managers }}"
   loop_control:
     loop_var: _pkg_mgr
   vars:
-    _pkg_names: "{{ computer_setup_packages.get(_pkg_mgr, []) }}"
+    _pkg_names: "{{ tenon_packages.get(_pkg_mgr, []) }}"
   # cask-only machines still need brew.yml for the tap of an `owner/tap/name` cask.
   when: >-
-    (computer_setup_packages.get(_pkg_mgr, []) | length > 0)
-    or (_pkg_mgr == 'brew' and computer_setup_packages.get('cask', []) | length > 0)
+    (tenon_packages.get(_pkg_mgr, []) | length > 0)
+    or (_pkg_mgr == 'brew' and tenon_packages.get('cask', []) | length > 0)

@@ -1,12 +1,12 @@
 ---
 # The Linux platform profile (Arch-based). See Darwin.yml for what each key means.
-computer_setup_platform:
+tenon_platform:
   name: Linux
   # Linuxbrew's prefix. No brew is used here; defined because layer paths
   # (adopt_if_present) template against it on every platform.
   homebrew_prefix: /home/linuxbrew/.linuxbrew
   uv_bin: /usr/bin/uv
-  log_dir: .local/state/computer-setup/logs
+  log_dir: .local/state/tenon/logs
   scheduler: none
   system_settings: none
   package_managers:

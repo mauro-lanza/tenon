@@ -25,8 +25,8 @@
 
     - name: Run unattended
       vars:
-        computer_setup_interactive: false
-        computer_setup_active_capabilities: [cap-on]
+        tenon_interactive: false
+        tenon_active_capabilities: [cap-on]
         logins: &defs
           - {id: ok, desc: ok, detect_file: "{{ s.path }}/has-key.json", detect_key: "https://x", remedy: "touch {{ s.path }}/ran-ok"}
           - {id: wrongkey, desc: wrongkey, detect_file: "{{ s.path }}/wrong-key.json", detect_key: "https://x", remedy: "touch {{ s.path }}/ran-wrongkey"}
@@ -51,8 +51,8 @@
 
     - name: Run interactively
       vars:
-        computer_setup_interactive: true
-        computer_setup_active_capabilities: [cap-on]
+        tenon_interactive: true
+        tenon_active_capabilities: [cap-on]
         logins: *defs
       ansible.builtin.include_role:
         name: logins

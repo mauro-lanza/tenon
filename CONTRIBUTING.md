@@ -23,8 +23,8 @@ layers** and never belong here.
 ```bash
 brew install yq ansible-lint shellcheck          # macOS
 sudo pacman -S go-yq ansible-lint shellcheck     # Arch (go-yq, not yq)
-computer-setup apply --tags runtime    # the pinned ansible-core and mitogen
-~/.local/share/computer-setup/runtime/bin/ansible-galaxy collection install -r requirements.yml
+tenon apply --tags runtime    # the pinned ansible-core and mitogen
+~/.local/share/tenon/runtime/bin/ansible-galaxy collection install -r requirements.yml
 ```
 
 ## Before opening a PR
@@ -75,7 +75,7 @@ Extend the tests when you touch what they cover:
 Lint your own layers after editing them:
 
 ```bash
-computer-setup layers lint --cache ~/.local/share/computer-setup/layers
+tenon layers lint --cache ~/.local/share/tenon/layers
 ```
 
 Every `shell_config_files` key must resolve to `files/<key>` or `templates/<key>.j2` (in the linted layer, or anywhere in the stack with `--cache`).
@@ -92,10 +92,10 @@ layer's `layer.yml` — is the public API; see
 [docs/architecture.md](docs/architecture.md). Layers are separate repos owned by
 other people, so a breaking change here strands them. Bump it, along with the
 orchestrator's supported maximum in `local.yml`, `bootstrap.sh` and
-`scripts/computer-setup-layers` — `check.sh` asserts all three agree.
+`scripts/tenon-layers` — `check.sh` asserts all three agree.
 
-The **run-state file** (`~/.local/state/computer-setup/last-run.json`) carries
-its own `schema_version`, and it is **not a contract yet**. `computer-setup
+The **run-state file** (`~/.local/state/tenon/last-run.json`) carries
+its own `schema_version`, and it is **not a contract yet**. `tenon
 status` ships in this repo and changes in the same commit, so it is currently
 the only consumer — reshape it freely. It becomes a contract the moment
 something outside this repo reads it: a UI, an MDM extension attribute, a

@@ -6,48 +6,48 @@
 
   vars:
     # SSH: scheduled pulls are non-interactive and HTTPS can prompt for keychain credentials.
-    computer_setup_repo_url: "git@github.com:mauro-lanza/computer-setup.git"
-    computer_setup_repo_branch: main
+    tenon_repo_url: "git@github.com:mauro-lanza/tenon.git"
+    tenon_repo_branch: main
     # From the platform profile core loads (roles/core/vars/platform/); layers template against it.
-    homebrew_prefix: "{{ computer_setup_platform.homebrew_prefix }}"
+    homebrew_prefix: "{{ tenon_platform.homebrew_prefix }}"
     home_dir: "{{ ansible_facts['env']['HOME'] }}"
 
     # Play-scoped because the layer merge templates repository entries against it.
     repositories_base_dir: "{{ home_dir }}/Projects"
 
     # All machine-local state: machine.yml, layer manifest, repository override. Overridable with -e.
-    computer_setup_config_dir: "{{ home_dir }}/.config/computer-setup"
+    tenon_config_dir: "{{ home_dir }}/.config/tenon"
     # Written by bootstrap.sh; absent means a standalone run on empty defaults.
-    computer_setup_machine_file: "{{ computer_setup_config_dir }}/machine.yml"
-    computer_setup_data_dir: "{{ home_dir }}/.local/share/computer-setup"
+    tenon_machine_file: "{{ tenon_config_dir }}/machine.yml"
+    tenon_data_dir: "{{ home_dir }}/.local/share/tenon"
     # Outside this checkout so the drift re-clone cannot wipe it.
-    computer_setup_layer_cache: "{{ computer_setup_data_dir }}/layers"
+    tenon_layer_cache: "{{ tenon_data_dir }}/layers"
     # Not a layer and not a cache: it can hold unpushed commits, which a layer sync hard-reset would destroy.
-    computer_setup_backup_repo_dir: "{{ computer_setup_data_dir }}/backups"
+    tenon_backup_repo_dir: "{{ tenon_data_dir }}/backups"
     # Pinned: the ansible-pull default is hostname-keyed, and a changing mDNS suffix starts a second checkout.
-    computer_setup_pull_dir: "{{ home_dir }}/.ansible/pull/computer-setup"
+    tenon_pull_dir: "{{ home_dir }}/.ansible/pull/tenon"
     # The pinned runtime (runtime.yml, roles/runtime); neither its tools nor its shims are on PATH.
-    computer_setup_runtime_dir: "{{ computer_setup_data_dir }}/runtime"
-    computer_setup_runtime_bin: "{{ computer_setup_runtime_dir }}/bin"
-    computer_setup_runtime_tools: "{{ computer_setup_runtime_dir }}/tools"
+    tenon_runtime_dir: "{{ tenon_data_dir }}/runtime"
+    tenon_runtime_bin: "{{ tenon_runtime_dir }}/bin"
+    tenon_runtime_tools: "{{ tenon_runtime_dir }}/tools"
     # Shared by the runtime role and the runner's mitogen path so neither can name a different python.
-    computer_setup_runtime_pins: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/runtime.yml') | from_yaml }}"
-    computer_setup_python_version: "{{ computer_setup_runtime_pins.python }}"
+    tenon_runtime_pins: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/runtime.yml') | from_yaml }}"
+    tenon_python_version: "{{ tenon_runtime_pins.python }}"
     # Where the engine installs its executables; three roles write here.
-    computer_setup_bin_dir: "{{ home_dir }}/.local/bin"
+    tenon_bin_dir: "{{ home_dir }}/.local/bin"
     # Machine-local state the engine writes (run-state, galaxy marker); more than one role writes here.
-    computer_setup_state_dir: "{{ home_dir }}/.local/state/computer-setup"
+    tenon_state_dir: "{{ home_dir }}/.local/state/tenon"
     # False for both scheduled modes, so no interactive `auth login` runs without a TTY.
-    computer_setup_interactive: true
+    tenon_interactive: true
     # Entry point for every ansible-pull; deployed by drift_correction, invoked by the agents.
-    computer_setup_command_path: "{{ computer_setup_bin_dir }}/computer-setup"
+    tenon_command_path: "{{ tenon_bin_dir }}/tenon"
     # One log per run; see LOG_DIR in the runner. Where per the platform profile.
-    computer_setup_log_dir: "{{ home_dir }}/{{ computer_setup_platform.log_dir }}"
+    tenon_log_dir: "{{ home_dir }}/{{ tenon_platform.log_dir }}"
     # The layer schema_version this orchestrator understands.
-    computer_setup_schema_version: 2
+    tenon_schema_version: 2
 
   pre_tasks:
-    - name: Initialize computer-setup orchestration
+    - name: Initialize tenon orchestration
       ansible.builtin.import_role:
         name: core
       tags: [always]
@@ -64,22 +64,22 @@
     - { role: extensions, tags: [extensions] }
     # One loop over all bundles, so it has no per-tool tag.
     - { role: capability_configs, tags: [capability_configs] }
-    - { role: macos, tags: [macos], when: "computer_setup_platform.system_settings == 'osx_defaults'" }
+    - { role: macos, tags: [macos], when: "tenon_platform.system_settings == 'osx_defaults'" }
     - { role: runtimes, tags: [runtimes] }
     # Merges into ~/.docker/config.json, which holds auths/credsStore this orchestrator must not own.
     - { role: docker, tags: [docker] }
     # `never`: the drift check must not clone repos, and bootstrap runs before SSH auth exists.
     - { role: repositories, tags: [repositories, never] }
-    # `never`: runs only via `computer-setup upgrade`.
+    # `never`: runs only via `tenon upgrade`.
     - { role: upgrade, tags: [upgrade, never] }
     # After capability_configs (a config deploy may create the credential store).
     - { role: logins, tags: [logins] }
-    # Deploys the `computer-setup` command the agents invoke.
+    # Deploys the `tenon` command the agents invoke.
     - { role: drift_correction, tags: [drift_correction] }
     # Last, after drift_correction and capability_configs, whose programs the agents invoke;
     # see "Partial failures are reported at the end of the play" in docs/findings.md.
     # The profile names the scheduler; Linux has none yet, so its runs are interactive.
-    - { role: scheduled_agents, tags: [scheduled_agents], when: "computer_setup_platform.scheduler == 'launchd'" }
+    - { role: scheduled_agents, tags: [scheduled_agents], when: "tenon_platform.scheduler == 'launchd'" }
 
   post_tasks:
     # Reported here so every role runs first; see "Partial failures are reported at the end of the play" in docs/findings.md.
@@ -88,7 +88,7 @@
         msg: |-
           {{ _missing | length }} package(s) need root to install and no sudo
           password was given: {{ _missing | join(', ') }}.
-          Everything else completed. Re-run `computer-setup apply` from a
+          Everything else completed. Re-run `tenon apply` from a
           terminal and enter your password when asked.
       vars:
         _missing: "{{ packages_unprivileged_missing | default([]) }}"
@@ -156,7 +156,7 @@
           {% if (gh_auth.rc | default(1)) != 0 %}
           - Run: gh auth login (handles SSH key + GitHub auth)
           {% endif %}
-          {% for reminder in computer_setup_reminders | default([]) %}
+          {% for reminder in tenon_reminders | default([]) %}
           - {{ reminder }}
           {% endfor %}
       tags: [always]

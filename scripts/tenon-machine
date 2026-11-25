@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Back up and restore a machine's declaration (machine.yml) to a private repo.
 #
-# A STANDALONE script, not logic inside the `computer-setup` runner, for the
-# same reason computer-setup-layers is: bootstrap.sh needs it on a machine where
+# A STANDALONE script, not logic inside the `tenon` runner, for the
+# same reason tenon-layers is: bootstrap.sh needs it on a machine where
 # the runner does not exist yet. The runner is an Ansible template deployed by
 # the first playbook run; restore has to happen BEFORE that, or there is nothing
 # to restore from. Two callers, one implementation.
@@ -14,10 +14,10 @@ PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 usage() {
     cat <<'EOF'
 Usage:
-  computer-setup-machine init --config PATH --repo-dir DIR
-  computer-setup-machine push --config PATH --repo-dir DIR --machine-file PATH
-  computer-setup-machine list --config PATH --repo-dir DIR
-  computer-setup-machine pull NAME [OUTFILE] --config PATH --repo-dir DIR
+  tenon-machine init --config PATH --repo-dir DIR
+  tenon-machine push --config PATH --repo-dir DIR --machine-file PATH
+  tenon-machine list --config PATH --repo-dir DIR
+  tenon-machine pull NAME [OUTFILE] --config PATH --repo-dir DIR
 
 machine.yml is a machine's entire declaration: its layers, the answers to their
 questions, and the capability selections. `bootstrap.sh --answers <file>` replays
@@ -71,12 +71,12 @@ machine_files() { find "$REPO_DIR/machines" -maxdepth 1 -name '*.yml' 2>/dev/nul
 load_config() {
     require_config_and_repo_dir
     if [[ ! -f "$CONFIG" ]]; then
-        die "No backup configured on this machine. Run: computer-setup machine init"
+        die "No backup configured on this machine. Run: tenon machine init"
     fi
     REPO="$(yq -r '.repo // ""' "$CONFIG" 2>/dev/null || true)"
     MACHINE_NAME="$(yq -r '.machine // ""' "$CONFIG" 2>/dev/null || true)"
     [[ -n "$REPO" && -n "$MACHINE_NAME" ]] \
-        || die "$CONFIG is missing repo: or machine:. Re-run: computer-setup machine init"
+        || die "$CONFIG is missing repo: or machine:. Re-run: tenon machine init"
 }
 
 # Clone on first use, refresh otherwise. --ff-only because this repo is only
@@ -102,9 +102,9 @@ cmd_init() {
     user="$(gh api user -q .login 2>/dev/null || true)"
     [[ -n "$user" ]] || die "Not authenticated to GitHub. Run: gh auth login"
 
-    printf "Repository for machine backups [%s/computer-setup-state]: " "$user"
+    printf "Repository for machine backups [%s/tenon-state]: " "$user"
     read -r slug
-    [[ -z "$slug" ]] && slug="${user}/computer-setup-state"
+    [[ -z "$slug" ]] && slug="${user}/tenon-state"
     # Written into a double-quoted YAML string below.
     [[ "$slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
         || die "Repository '$slug' is invalid — use owner/name (letters, digits, '.', '_', '-')"
@@ -127,7 +127,7 @@ cmd_init() {
         # --add-readme so the repo has a branch. Cloning and pushing to a
         # completely empty repo needs special cases this then never hits.
         gh repo create "$slug" --private --add-readme \
-            --description "computer-setup: per-machine declarations" \
+            --description "tenon: per-machine declarations" \
             || die "Could not create $slug"
     fi
 
@@ -135,7 +135,7 @@ cmd_init() {
     {
         echo "---"
         echo "# Where this machine's machine.yml is backed up, and under what name."
-        echo "# Managed by \`computer-setup machine init\`."
+        echo "# Managed by \`tenon machine init\`."
         echo "repo: \"git@github.com:${slug}.git\""
         echo "machine: \"${machine}\""
     } > "$CONFIG"
@@ -145,7 +145,7 @@ cmd_init() {
     sync_clone
     log ""
     log "Configured. This machine backs up as '${machine}' to ${slug}."
-    log "Push it with:  computer-setup machine push"
+    log "Push it with:  tenon machine push"
 }
 
 cmd_push() {
@@ -188,7 +188,7 @@ cmd_list() {
             "${when:+, updated $when}" \
             "$([[ "$name" == "$MACHINE_NAME" ]] && printf '  (this machine)')"
     done <<< "$(machine_files)"
-    [[ $found -eq 0 ]] && log "No machines backed up yet. Run: computer-setup machine push"
+    [[ $found -eq 0 ]] && log "No machines backed up yet. Run: tenon machine push"
     return 0
 }
 
@@ -201,13 +201,13 @@ cmd_names() {
 
 cmd_pull() {
     local name="${1:-}" out="${2:-}"
-    [[ -n "$name" ]] || die "Usage: computer-setup machine pull <name> [outfile]"
+    [[ -n "$name" ]] || die "Usage: tenon machine pull <name> [outfile]"
     valid_name "$name" || die "Invalid machine name '${name}'"
     load_config
     sync_clone
 
     local src="$REPO_DIR/machines/${name}.yml"
-    [[ -f "$src" ]] || die "No backup named '${name}'. Run: computer-setup machine list"
+    [[ -f "$src" ]] || die "No backup named '${name}'. Run: tenon machine list"
     [[ -z "$out" ]] && out="${PWD}/${name}-machine.yml"
     [[ -e "$out" ]] && die "Refusing to overwrite $out"
 

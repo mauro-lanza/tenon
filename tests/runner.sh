@@ -14,8 +14,8 @@ mkdir -p "$T/bin" "$T/state" "$T/logs" "$T/home"
 # The runtime's own interpreter (has jinja2); its path is the `ansible` shebang.
 RT_PY="$(head -1 "$(command -v ansible)" | sed 's/^#!//')"
 # Rendered for THIS host's platform: the stubs below run its real commands.
-"$RT_PY" tests/render-runner.py "$(uname -s)" "$T" "$T/bin/computer-setup"
-"$RT_PY" tests/render-runner.py "$(uname -s)" "$T" "$T/bin/computer-setup-cached" "$T/cache"
+"$RT_PY" tests/render-runner.py "$(uname -s)" "$T" "$T/bin/tenon"
+"$RT_PY" tests/render-runner.py "$(uname -s)" "$T" "$T/bin/tenon-cached" "$T/cache"
 
 # Stubs. The git stub counts calls and fails while $GIT_FAIL is set.
 cat > "$T/bin/git" <<STUB
@@ -32,8 +32,8 @@ exit 0
 STUB
 chmod +x "$T/bin/git" "$T/bin/ansible-pull"
 
-run() { HOME="$T/home" PROBE_RETRY_DELAY=0 PATH="$T/bin:$PATH" "$T/bin/computer-setup" "$@"; }
-runc() { HOME="$T/home" PATH="$T/bin:$PATH" "$T/bin/computer-setup-cached" "$@"; }
+run() { HOME="$T/home" PROBE_RETRY_DELAY=0 PATH="$T/bin:$PATH" "$T/bin/tenon" "$@"; }
+runc() { HOME="$T/home" PATH="$T/bin:$PATH" "$T/bin/tenon-cached" "$@"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 # `ago N d|M FORMAT`: N days or minutes ago; BSD and GNU date spell it differently.
 ago() {
@@ -134,8 +134,8 @@ echo "  ok  pid-less lock: respected when young, cleared when old"
 # 7. The play must be told which repo and ref this runner follows, or it re-renders
 #    the runner from local.yml's defaults and silently un-forks it.
 args="$(cat "$T/pull-args")"
-[[ "$args" == *"-e computer_setup_repo_url=git@example.invalid:o/r.git"* ]] || fail "repo url not passed to the play: $args"
-[[ "$args" == *"-e computer_setup_repo_branch=main"* ]] || fail "repo branch not passed to the play: $args"
+[[ "$args" == *"-e tenon_repo_url=git@example.invalid:o/r.git"* ]] || fail "repo url not passed to the play: $args"
+[[ "$args" == *"-e tenon_repo_branch=main"* ]] || fail "repo branch not passed to the play: $args"
 echo "  ok  the play is told the repo url and branch"
 
 # 8. `layers new` scaffolds a lintable layer named as asked, and refuses to overwrite.
@@ -143,14 +143,14 @@ mkdir -p "$T/pull/examples"
 cp -R "$ROOT/examples/example-layer" "$T/pull/examples/example-layer"
 (cd "$T" && run layers new acme >/dev/null) || fail "layers new failed"
 [[ "$(yq -r '.name' "$T/acme/layer.yml")" == acme ]] || fail "scaffold not renamed"
-"$ROOT/scripts/computer-setup-layers" lint --layer "$T/acme" >/dev/null || fail "scaffold does not lint"
+"$ROOT/scripts/tenon-layers" lint --layer "$T/acme" >/dev/null || fail "scaffold does not lint"
 (cd "$T" && run layers new acme >/dev/null 2>&1) && fail "layers new overwrote an existing dir"
 (cd "$T" && run layers new ../x >/dev/null 2>&1) && fail "layers new accepted a bad name"
 echo "  ok  layers new scaffolds a lintable layer, refuses overwrite and bad names"
 
 # 8b. `layers sync` and `layers lint` pass the machine file and keep explicit flags.
-printf '#!/bin/bash\necho "$*"\n' > "$T/bin/computer-setup-layers"
-chmod +x "$T/bin/computer-setup-layers"
+printf '#!/bin/bash\necho "$*"\n' > "$T/bin/tenon-layers"
+chmod +x "$T/bin/tenon-layers"
 [[ "$(run layers sync)" == "sync" ]] || fail "layers sync added args without a machine file"
 touch "$T/none.yml"
 [[ "$(run layers sync)" == "sync --manifest $T/none.yml" ]] || fail "layers sync did not pass the manifest"
@@ -159,7 +159,7 @@ touch "$T/none.yml"
 [[ "$(run layers lint --layer x)" == "lint --manifest $T/none.yml --layer x" ]] || fail "layers lint --layer got --machine"
 [[ "$(runc layers sync)" == "sync --manifest $T/none.yml --cache $T/cache" ]] || fail "layers sync did not default --cache"
 [[ "$(runc layers sync --cache X)" == "sync --manifest $T/none.yml --cache X" ]] || fail "layers sync did not keep explicit --cache"
-rm "$T/none.yml" "$T/bin/computer-setup-layers"
+rm "$T/none.yml" "$T/bin/tenon-layers"
 echo "  ok  layers sync/lint pass the manifest and respect explicit flags"
 
 # 9. Pruning removes old successful logs and never an old failed one. A failed run
@@ -191,7 +191,7 @@ for want in \
     "  … list truncated" \
     "Failed:    1 task(s):" \
     "  - Broken" \
-    "Run \`computer-setup log\` for the detail." \
+    "Run \`tenon log\` for the detail." \
     "Sync:      no successful scheduled run recorded yet"; do
     [[ "$out" == *"$want"* ]] || fail "status lacks '$want': $out"
 done
@@ -213,7 +213,7 @@ ago 2 d '%Y-%m-%dT%H:%M:%S%z' > "$T/state/last-success"
 ago 20 d '%Y-%m-%dT%H:%M:%S%z' > "$T/state/last-success"
 [[ "$(run status)" == *"Sync:      STALE — last successful scheduled run was 20 day(s) ago"* ]] || fail "Sync STALE line missing"
 rm -f "$T/state/last-run.json"
-[[ "$(run status)" == "No run recorded yet. Run \`computer-setup check\` to populate it." ]] || fail "empty-state message changed"
+[[ "$(run status)" == "No run recorded yet. Run \`tenon check\` to populate it." ]] || fail "empty-state message changed"
 echo "  ok  status: changed/failed/partial/truncated, drift, sync, empty"
 
 # 11. status --json, with the success stamp missing and present.
@@ -278,7 +278,7 @@ for args in "--check" "--tags x --check"; do
     read -r -a argv <<< "$args"
     rc=0; err="$(run apply "${argv[@]}" 2>&1)" || rc=$?
     [[ "$rc" == 64 ]] || fail "apply $args exit $rc, want 64"
-    [[ "$err" == *"apply: --check is a dry run; use 'computer-setup check'"* ]] || fail "apply $args not explained: $err"
+    [[ "$err" == *"apply: --check is a dry run; use 'tenon check'"* ]] || fail "apply $args not explained: $err"
 done
 [[ ! -e "$T/pull-calls" && ! -e "$T/git-calls" && ! -e "$T/state/run.lock" ]] || fail "refused apply ran or locked"
 [[ "$(printf '%s\n' "$T"/logs/*.log | wc -l | tr -d ' ')" == 2 ]] || fail "refused apply wrote a log"
@@ -286,7 +286,7 @@ run apply --diff >/dev/null 2>&1 || fail "apply --diff was refused"
 echo "  ok  apply refuses --check, allows --diff"
 
 # 14. manifest: counts and sections from a fixture; missing file is a message.
-[[ "$(run manifest)" == "No manifest yet. Run \`computer-setup check\` to populate it." ]] || fail "missing manifest message changed"
+[[ "$(run manifest)" == "No manifest yet. Run \`tenon check\` to populate it." ]] || fail "missing manifest message changed"
 cat > "$T/state/managed-paths.json" <<'JSON'
 {"generated":"2026-01-05T00:00:00+0000",
  "files":[{"path":"/h/.zshrc","role":"shell"},{"path":"/h/.gitconfig","role":"git"}],
@@ -354,20 +354,20 @@ printf '%s\n%s' "$HEAD" '{"event":"end","result":"ok","tas' > "$T/state/progress
 echo "  ok  progress: absent, launching, running, clamp, no estimate, stalled, ended, half-written"
 
 # 16. upgrade, on a pty (it refuses without a terminal on stdin). ansible-pull is
-#     stubbed to record CS_SUDO_PASSWORD and its output; a yq stub records the
+#     stubbed to record TENON_SUDO_PASSWORD and its output; a yq stub records the
 #     password as prune_logs sees it, i.e. after the run.
 cat > "$T/bin/ansible-pull" <<STUB
 #!/bin/bash
 echo x >> "$T/pull-calls"
 printf '%s\\n' "\$*" > "$T/pull-args"
-printf '%s' "\${CS_SUDO_PASSWORD-UNSET}" > "$T/pull-pw"
-printf '%s %s\\n' "\${CS_RUN_MODE-}" "\${CS_RUN_PARTIAL-}" > "$T/pull-mode"
+printf '%s' "\${TENON_SUDO_PASSWORD-UNSET}" > "$T/pull-pw"
+printf '%s %s\\n' "\${TENON_RUN_MODE-}" "\${TENON_RUN_PARTIAL-}" > "$T/pull-mode"
 echo PULL-OUTPUT
 exit "\${PULL_RC:-0}"
 STUB
 cat > "$T/bin/yq" <<STUB
 #!/bin/bash
-printf '%s' "\${CS_SUDO_PASSWORD-UNSET}" > "$T/prune-pw"
+printf '%s' "\${TENON_SUDO_PASSWORD-UNSET}" > "$T/prune-pw"
 exec "$(command -v yq)" "\$@"
 STUB
 chmod +x "$T/bin/ansible-pull" "$T/bin/yq"
@@ -395,7 +395,7 @@ PY
 # $1 answers typed on the terminal, $2 file for stdout ("-" keeps it on the pty).
 upgrade_tty() {
     rm -f "$T"/pull-{calls,args,pw,mode} "$T/prune-pw"
-    HOME="$T/home" PATH="$T/bin:$PATH" "$RT_PY" "$T/ptyrun.py" "$2" "$1" "$T/bin/computer-setup" upgrade
+    HOME="$T/home" PATH="$T/bin:$PATH" "$RT_PY" "$T/ptyrun.py" "$2" "$1" "$T/bin/tenon" upgrade
 }
 
 # Linux upgrades need no root (no casks; pacman is left to a full system
@@ -404,7 +404,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
     rc=0; out="$(upgrade_tty $'y\n' -)" || rc=$?
     [[ "$rc" == 0 && "$out" == *"Proceed? [y/N]: "* && "$out" != *password* ]] || fail "linux upgrade prompts changed: rc=$rc $out"
     [[ "$(cat "$T/pull-pw")" == UNSET ]] || fail "linux upgrade exported a password"
-    [[ "$(cat "$T/pull-args")" == *"--tags upgrade -e computer_setup_upgrade_assume_yes=true local.yml"* ]] || fail "upgrade args changed: $(cat "$T/pull-args")"
+    [[ "$(cat "$T/pull-args")" == *"--tags upgrade -e tenon_upgrade_assume_yes=true local.yml"* ]] || fail "upgrade args changed: $(cat "$T/pull-args")"
     rc=0; out="$(upgrade_tty $'n\n' -)" || rc=$?
     [[ "$rc" == 0 && "$out" == *"Aborted — nothing changed."* && ! -e "$T/pull-calls" ]] || fail "declining did not abort cleanly: rc=$rc $out"
     echo "  ok  upgrade (Linux): one confirmation, no password, decline aborts"
@@ -416,10 +416,10 @@ rc=0; out="$(upgrade_tty $'y\nhunter2\n' -)" || rc=$?
 [[ "$out" == *"Proceed? [y/N]: "* && "$out" == *"macOS password (Enter to skip those casks): "* ]] || fail "prompts changed: $out"
 [[ "$out" == *PULL-OUTPUT* ]] || fail "upgrade did not stream ansible-pull to the terminal: $out"
 [[ "$(cat "$(latest_log)")" != *hunter2* ]] || fail "the password reached the run log"
-[[ "$(cat "$T/pull-pw")" == hunter2 ]] || fail "CS_SUDO_PASSWORD did not reach ansible-pull"
-[[ "$(cat "$T/pull-args")" == *"--tags upgrade -e computer_setup_upgrade_assume_yes=true local.yml"* ]] || fail "upgrade args changed: $(cat "$T/pull-args")"
+[[ "$(cat "$T/pull-pw")" == hunter2 ]] || fail "TENON_SUDO_PASSWORD did not reach ansible-pull"
+[[ "$(cat "$T/pull-args")" == *"--tags upgrade -e tenon_upgrade_assume_yes=true local.yml"* ]] || fail "upgrade args changed: $(cat "$T/pull-args")"
 [[ "$(cat "$T/pull-mode")" == "upgrade 1" ]] || fail "upgrade not recorded as a partial upgrade run: $(cat "$T/pull-mode")"
-[[ "$(cat "$T/prune-pw")" == UNSET ]] || fail "CS_SUDO_PASSWORD still set after the run (prune saw it)"
+[[ "$(cat "$T/prune-pw")" == UNSET ]] || fail "TENON_SUDO_PASSWORD still set after the run (prune saw it)"
 [[ "$(cat "$(latest_log)")" == *PULL-OUTPUT* ]] || fail "upgrade did not keep its output in the run log"
 [[ ! -e "$T/state/run.lock" ]] || fail "upgrade left the lock behind"
 [[ "$(yq -p json -o json -r '.mode' "$T/state/progress.jsonl")" == upgrade ]] || fail "upgrade did not claim the progress file"
@@ -443,7 +443,7 @@ rc=0; upgrade_tty $'y\nhunter2\n' "$T/upgrade-stdout" >/dev/null || rc=$?
 [[ "$(cat "$T/pull-pw")" == hunter2 && "$(cat "$(latest_log)")" == *PULL-OUTPUT* ]] || fail "non-tty stdout: password or log lost"
 
 rc=0; out="$(run upgrade </dev/null 2>&1)" || rc=$?
-[[ "$rc" == 1 && "$out" == *"computer-setup upgrade needs a terminal to confirm on."* ]] || fail "no-terminal refusal changed: rc=$rc $out"
+[[ "$rc" == 1 && "$out" == *"tenon upgrade needs a terminal to confirm on."* ]] || fail "no-terminal refusal changed: rc=$rc $out"
 echo "  ok  upgrade: prompts, password reaches ansible-pull and is gone after, decline, rc, non-tty stdout, no terminal"
 
 # 17. A held lock refuses the upgrade AFTER the prompts, without running anything.

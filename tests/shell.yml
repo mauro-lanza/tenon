@@ -9,12 +9,12 @@
   vars:
     homebrew_prefix: /opt/homebrew
     home_dir: "{{ shell_scratch }}/home"
-    computer_setup_layer_cache: "{{ shell_scratch }}/cache"
-    computer_setup_active_layers:
+    tenon_layer_cache: "{{ shell_scratch }}/cache"
+    tenon_active_layers:
       - {name: alpha, priority: 10}
       - {name: beta, priority: 20}
     shell_config_files: []
-    _snip: "{{ computer_setup_layer_cache }}/alpha/files/shell"
+    _snip: "{{ tenon_layer_cache }}/alpha/files/shell"
     _zsh: "{{ home_dir }}/.zsh"
   tasks:
     - name: Seed layers (phase 1)
@@ -27,7 +27,7 @@
             mode: "0755"
           loop:
             - "{{ _snip }}"
-            - "{{ computer_setup_layer_cache }}/beta"
+            - "{{ tenon_layer_cache }}/beta"
             - "{{ _zsh }}"
         - name: Write the snippets
           ansible.builtin.copy:
@@ -60,7 +60,7 @@
       ansible.builtin.include_role:
         name: shell
       vars:
-        computer_setup_active_capabilities: "{{ ['nope'] if shell_phase | int == 2 else [] }}"
+        tenon_active_capabilities: "{{ ['nope'] if shell_phase | int == 2 else [] }}"
 
     - name: Read back what was deployed
       ansible.builtin.find:
@@ -71,7 +71,7 @@
 
     - name: Read the manifest
       ansible.builtin.slurp:
-        src: "{{ _zsh }}/.computer-setup-snippets"
+        src: "{{ _zsh }}/.tenon-snippets"
       register: manifest
 
     - name: Read the rendered template

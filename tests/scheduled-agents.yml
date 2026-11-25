@@ -13,7 +13,7 @@
   connection: local
   gather_facts: true
   vars:
-    computer_setup_active_capabilities: []
+    tenon_active_capabilities: []
     # The plist template puts the Homebrew prefix on the agent's PATH; a
     # LaunchAgent inherits almost nothing.
     homebrew_prefix: /opt/homebrew
@@ -24,12 +24,12 @@
     drift_correction_enabled: false
     scheduled_agents_engine: []
     agent_alpha:
-      label: com.computer-setup.test-alpha
+      label: com.tenon.test-alpha
       program: /usr/bin/true
       hour: 3
       minute: 0
     agent_beta:
-      label: com.computer-setup.test-beta
+      label: com.tenon.test-beta
       program: /usr/bin/true
       hour: 4
       minute: 0
@@ -53,8 +53,8 @@
         path: "{{ agents_home.path }}/Library/LaunchAgents/{{ item }}.plist"
       register: after_first
       loop:
-        - com.computer-setup.test-alpha
-        - com.computer-setup.test-beta
+        - com.tenon.test-alpha
+        - com.tenon.test-beta
 
     # ── Run 2: beta is DELETED from the declaration entirely ─────────────────
     # Not disabled, not capability-gated — removed. This is the case the
@@ -71,12 +71,12 @@
         path: "{{ agents_home.path }}/Library/LaunchAgents/{{ item }}.plist"
       register: after_second
       loop:
-        - com.computer-setup.test-alpha
-        - com.computer-setup.test-beta
+        - com.tenon.test-alpha
+        - com.tenon.test-beta
 
     - name: Read the manifest
       ansible.builtin.slurp:
-        src: "{{ agents_home.path }}/Library/LaunchAgents/.computer-setup-agents"
+        src: "{{ agents_home.path }}/Library/LaunchAgents/.tenon-agents"
       register: agents_manifest
 
     - name: Assert the deleted agent was torn down
@@ -93,7 +93,7 @@
           - not after_second.results[1].stat.exists
           # And the manifest now names only what is still wanted, so the next
           # run does not try to reap it again.
-          - manifest_labels == ['com.computer-setup.test-alpha']
+          - manifest_labels == ['com.tenon.test-alpha']
         success_msg: "an agent deleted from a layer is unloaded and its plist removed"
 
     - name: Redeploy with every agent deleted
@@ -105,12 +105,12 @@
 
     - name: Stat and read the manifest after the third run
       ansible.builtin.stat:
-        path: "{{ agents_home.path }}/Library/LaunchAgents/com.computer-setup.test-alpha.plist"
+        path: "{{ agents_home.path }}/Library/LaunchAgents/com.tenon.test-alpha.plist"
       register: after_third
 
     - name: Read the emptied manifest
       ansible.builtin.slurp:
-        src: "{{ agents_home.path }}/Library/LaunchAgents/.computer-setup-agents"
+        src: "{{ agents_home.path }}/Library/LaunchAgents/.tenon-agents"
       register: agents_manifest_empty
 
     - name: Assert the last agent was torn down and the manifest emptied

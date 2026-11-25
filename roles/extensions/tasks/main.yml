@@ -9,4 +9,4 @@
     label: "{{ _mgr.id }}"
   when: >-
     (_mgr.capability is not defined)
-    or (_mgr.capability in computer_setup_active_capabilities)
+    or (_mgr.capability in tenon_active_capabilities)

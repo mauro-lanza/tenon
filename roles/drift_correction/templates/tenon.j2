@@ -1,7 +1,7 @@
 #!/bin/bash
 # Managed by ansible — do not edit manually
 #
-# computer-setup — the single entry point for operating this machine's setup.
+# tenon — the single entry point for operating this machine's setup.
 #
 # Bash, not zsh: shellcheck has no zsh mode, and every scheduled run goes
 # through this script. Keep it POSIX-ish: macOS ships bash 3.2.
@@ -14,31 +14,31 @@
 #   it fail; `check` never mutates and is what the scheduled agent runs.
 #
 # INTERNAL MODES, invoked by the LaunchAgents — not for interactive use:
-#   computer-setup _scheduled-check    `check` with logging + notification
-#   computer-setup _scheduled-upgrade  formulae/Galaxy/Node only, no casks
+#   tenon _scheduled-check    `check` with logging + notification
+#   tenon _scheduled-upgrade  formulae/Galaxy/Node only, no casks
 #
 # The scheduled modes exit 0 when the repo is unreachable — see the
 # connectivity guard below.
 
 set -uo pipefail
 
-REPO_URL="{{ computer_setup_repo_url }}"
-REPO_BRANCH="{{ computer_setup_repo_branch }}"
+REPO_URL="{{ tenon_repo_url }}"
+REPO_BRANCH="{{ tenon_repo_branch }}"
 # Layers, answers and capability selections in one file, so a backup is never
 # half a machine.
-MACHINE_FILE="{{ computer_setup_machine_file }}"
-LAYER_CACHE="{{ computer_setup_layer_cache }}"
+MACHINE_FILE="{{ tenon_machine_file }}"
+LAYER_CACHE="{{ tenon_layer_cache }}"
 # One log per run, in a directory of its own. Retention: see "Run logs" in
 # docs/architecture.md.
-LOG_DIR="{{ computer_setup_log_dir }}"
+LOG_DIR="{{ tenon_log_dir }}"
 # Successful runs are pruned past this. Failed runs are never pruned: they are
 # the ones you come back to.
 LOG_RETENTION_DAYS={{ drift_correction_log_retention_days }}
 # Set per run by start_run_log.
 RUN_LOG=""
-STATE_DIR="{{ computer_setup_state_dir }}"
-# Written by the computer_setup_state callback plugin, which is inert unless
-# CS_STATE_FILE is set. `status` reads it.
+STATE_DIR="{{ tenon_state_dir }}"
+# Written by the tenon_state callback plugin, which is inert unless
+# TENON_STATE_FILE is set. `status` reads it.
 LAST_RUN_FILE="${STATE_DIR}/last-run.json"
 # Every managed path, rewritten on each complete run. Not last-run.json: that is
 # what happened, this is what is.
@@ -55,12 +55,12 @@ LAST_SUCCESS_FILE="${STATE_DIR}/last-success"
 # would hide a stale upgrade.
 UPGRADE_SUCCESS_FILE="${STATE_DIR}/last-success-upgrade"
 # Config, not state. Kept out of machine.yml, which is the thing being backed up.
-BACKUP_CONFIG="{{ computer_setup_config_dir }}/backup.yml"
-BACKUP_REPO_DIR="{{ computer_setup_backup_repo_dir }}"
+BACKUP_CONFIG="{{ tenon_config_dir }}/backup.yml"
+BACKUP_REPO_DIR="{{ tenon_backup_repo_dir }}"
 # Days without a successful scheduled run before `status` reports STALE.
 STALE_AFTER_DAYS={{ drift_correction_stale_after_days }}
 # Pinned in runtime.yml: an unattended `brew upgrade` must not move ansible-core.
-ANSIBLE_PULL="{{ computer_setup_runtime_bin }}/ansible-pull"
+ANSIBLE_PULL="{{ tenon_runtime_bin }}/ansible-pull"
 
 # Unbuffered so the log is in event order. When stdout is not a terminal,
 # ansible-pull's own banner would flush after the playbook it spawns, and `log`
@@ -70,20 +70,20 @@ export PYTHONUNBUFFERED=1
 # ─── Mitogen ─────────────────────────────────────────────────────────────────
 # A persistent interpreter instead of fork+exec per task (48.6s -> 15.4s here).
 #
-# CS_NO_MITOGEN=1 is the escape hatch: mitogen patches Ansible internals, and
+# TENON_NO_MITOGEN=1 is the escape hatch: mitogen patches Ansible internals, and
 # this runner is also how a machine pulls its own fix.
-MITOGEN_STRATEGY_DIR="{{ computer_setup_runtime_tools }}/ansible-core/lib/python{{ computer_setup_python_version }}/site-packages/ansible_mitogen/plugins/strategy"
-if [[ "${CS_NO_MITOGEN:-0}" != "1" && -d "$MITOGEN_STRATEGY_DIR" ]]; then
+MITOGEN_STRATEGY_DIR="{{ tenon_runtime_tools }}/ansible-core/lib/python{{ tenon_python_version }}/site-packages/ansible_mitogen/plugins/strategy"
+if [[ "${TENON_NO_MITOGEN:-0}" != "1" && -d "$MITOGEN_STRATEGY_DIR" ]]; then
     export ANSIBLE_STRATEGY_PLUGINS="$MITOGEN_STRATEGY_DIR"
     export ANSIBLE_STRATEGY=mitogen_linear
 fi
 # ansible-pull's checkout of the orchestrator. Never edit it by hand: a dirty
 # checkout makes ansible-pull refuse to update, and scheduled runs go stale
 # silently.
-PULL_DIR="{{ computer_setup_pull_dir }}"
-BIN_DIR="{{ computer_setup_bin_dir }}"
-LAYER_SYNC="${BIN_DIR}/computer-setup-layers"
-MACHINE_SYNC="${BIN_DIR}/computer-setup-machine"
+PULL_DIR="{{ tenon_pull_dir }}"
+BIN_DIR="{{ tenon_bin_dir }}"
+LAYER_SYNC="${BIN_DIR}/tenon-layers"
+MACHINE_SYNC="${BIN_DIR}/tenon-machine"
 CONNECTIVITY_TIMEOUT={{ drift_correction_connectivity_timeout }}
 # expanduser: a human answers this path, and `~` does not expand inside a quoted
 # shell assignment.
@@ -95,29 +95,29 @@ REPOS_BASE_DIR="{{ repositories_base_dir | expanduser }}"
 # The URL and branch also go to the play, which re-renders this script from
 # them; without -e a fork or pinned ref would be reset by the next apply.
 ARGS=(-U "$REPO_URL" -C "$REPO_BRANCH" -d "$PULL_DIR"
-      -e "computer_setup_repo_url=${REPO_URL}" -e "computer_setup_repo_branch=${REPO_BRANCH}")
+      -e "tenon_repo_url=${REPO_URL}" -e "tenon_repo_branch=${REPO_BRANCH}")
 # One file, so one -e @ and one path var. `layers` rides along into play scope
 # as an extra-var, which is why core reserves the name against layer vars.
-[[ -f "$MACHINE_FILE" ]] && ARGS+=(-e "@${MACHINE_FILE}" -e "computer_setup_machine_file=${MACHINE_FILE}")
-[[ -n "$LAYER_CACHE" ]] && ARGS+=(-e "computer_setup_layer_cache=${LAYER_CACHE}")
+[[ -f "$MACHINE_FILE" ]] && ARGS+=(-e "@${MACHINE_FILE}" -e "tenon_machine_file=${MACHINE_FILE}")
+[[ -n "$LAYER_CACHE" ]] && ARGS+=(-e "tenon_layer_cache=${LAYER_CACHE}")
 
 # The three platform-specific commands, rendered from the platform profile.
 notify() {
-    {{ computer_setup_platform.runner.notify }} 2>/dev/null || true
+    {{ tenon_platform.runner.notify }} 2>/dev/null || true
 }
 
 # Epoch mtime of a path.
 file_mtime() {
-    {{ computer_setup_platform.runner.mtime }} 2>/dev/null
+    {{ tenon_platform.runner.mtime }} 2>/dev/null
 }
 
 # Epoch seconds of a `%Y-%m-%dT%H:%M:%S%z` stamp.
 stamp_epoch() {
-    {{ computer_setup_platform.runner.stamp_epoch }} 2>/dev/null
+    {{ tenon_platform.runner.stamp_epoch }} 2>/dev/null
 }
 
 notify_failed() {
-    notify "computer-setup ${1} failed" "Exited rc=${2}. Run \`computer-setup log\`."
+    notify "tenon ${1} failed" "Exited rc=${2}. Run \`tenon log\`."
 }
 
 log() { printf '%s\n' "$*" >> "${RUN_LOG:-/dev/null}"; }
@@ -156,7 +156,7 @@ acquire_lock() {
 # Interactive callers refuse, and say who holds it.
 require_lock() {
     acquire_lock && return 0
-    printf '%s\n' "computer-setup: another run is in progress (pid ${LOCK_HOLDER:-unknown}). Wait for it, or see \`computer-setup progress\`." >&2
+    printf '%s\n' "tenon: another run is in progress (pid ${LOCK_HOLDER:-unknown}). Wait for it, or see \`tenon progress\`." >&2
     return 1
 }
 
@@ -171,11 +171,11 @@ start_run_log() {
     : > "$RUN_LOG" 2>/dev/null || RUN_LOG=""
     [[ -n "$RUN_LOG" ]] && chmod 600 "$RUN_LOG" 2>/dev/null
 
-    CS_RUN_ID="$$-$(date +%s)"
-    export CS_RUN_ID
+    TENON_RUN_ID="$$-$(date +%s)"
+    export TENON_RUN_ID
     mkdir -p "$STATE_DIR" 2>/dev/null || true
     printf '{"schema_version":1,"event":"launching","mode":"%s","run_id":"%s","started":"%s"}\n' \
-        "$1" "$CS_RUN_ID" "$(date '+%Y-%m-%dT%H:%M:%S%z')" > "$PROGRESS_FILE" 2>/dev/null || true
+        "$1" "$TENON_RUN_ID" "$(date '+%Y-%m-%dT%H:%M:%S%z')" > "$PROGRESS_FILE" 2>/dev/null || true
     chmod 600 "$PROGRESS_FILE" 2>/dev/null || true
 }
 
@@ -208,7 +208,7 @@ prune_logs() {
 
 usage() {
     cat <<'EOF'
-computer-setup — operate this machine's configuration.
+tenon — operate this machine's configuration.
 
   apply [args]     Reconcile now. Streams to your terminal.
   check [args]     Drift detection (--check --diff). Never mutates.
@@ -221,14 +221,14 @@ computer-setup — operate this machine's configuration.
   progress         What a run is doing right now, if one is running.
   machine <sub>    Back up / restore this machine's declaration (init|push|list|pull).
   repos [dir]      Print a repositories.yml scaffolded from existing checkouts.
-{% if computer_setup_platform.system_settings == 'osx_defaults' %}
+{% if tenon_platform.system_settings == 'osx_defaults' %}
   capture [args]   Diff live macOS defaults against the declared values.
 {% endif %}
   layers sync      Refresh the content-layer cache.
   layers lint      Check that layer cross-references actually resolve.
   layers new NAME [DIR]  Scaffold a layer from the reference example (DIR defaults to ./NAME).
 
-To clone repositories that are missing:  computer-setup apply --tags repositories
+To clone repositories that are missing:  tenon apply --tags repositories
 EOF
 }
 
@@ -238,7 +238,7 @@ EOF
 sync_layers() {
     [[ -f "$MACHINE_FILE" && -n "$LAYER_CACHE" ]] || return 0
     "$LAYER_SYNC" sync --manifest "$MACHINE_FILE" --cache "$LAYER_CACHE" \
-        --schema-version {{ computer_setup_schema_version }}
+        --schema-version {{ tenon_schema_version }}
 }
 
 # Any mode that runs the playbook records what it did. `partial` marks a
@@ -247,18 +247,18 @@ sync_layers() {
 # The args themselves are not recorded: `-e secret=…` is legitimate, and this is
 # a report, not a shell history.
 state_env() {
-    CS_STATE_FILE="$LAST_RUN_FILE"
-    CS_MANIFEST_FILE="$MANIFEST_FILE"
-    CS_HISTORY_FILE="$HISTORY_FILE"
-    CS_PROGRESS_FILE="$PROGRESS_FILE"
+    TENON_STATE_FILE="$LAST_RUN_FILE"
+    TENON_MANIFEST_FILE="$MANIFEST_FILE"
+    TENON_HISTORY_FILE="$HISTORY_FILE"
+    TENON_PROGRESS_FILE="$PROGRESS_FILE"
     # Lets `history` link each run to its own log.
-    CS_LOG_FILE="$RUN_LOG"
-    CS_RUN_MODE="$1"
-    CS_RUN_PARTIAL="$2"
+    TENON_LOG_FILE="$RUN_LOG"
+    TENON_RUN_MODE="$1"
+    TENON_RUN_PARTIAL="$2"
     # Keys the history line: the final hook can fire twice, and plays may be
     # separate processes. Minted by start_run_log.
-    export CS_STATE_FILE CS_MANIFEST_FILE CS_HISTORY_FILE CS_PROGRESS_FILE CS_LOG_FILE
-    export CS_RUN_MODE CS_RUN_PARTIAL CS_RUN_ID
+    export TENON_STATE_FILE TENON_MANIFEST_FILE TENON_HISTORY_FILE TENON_PROGRESS_FILE TENON_LOG_FILE
+    export TENON_RUN_MODE TENON_RUN_PARTIAL TENON_RUN_ID
 }
 
 # ─── Interactive reconcile: stream, don't capture ────────────────────────────
@@ -282,7 +282,7 @@ run_foreground() {
     if ! GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=${CONNECTIVITY_TIMEOUT} -o StrictHostKeyChecking=accept-new" repo_reachable; then
         local msg="${REPO_URL} unreachable (offline, port 22 blocked, or SSH key unavailable); probe errors are in the run log"
         log "RESULT: failed — ${msg}"
-        printf '%s\n' "computer-setup ${mode}: ${msg}" >&2
+        printf '%s\n' "tenon ${mode}: ${msg}" >&2
         [[ -t 1 ]] || notify_failed "$mode" 1
         close_unfinished_run
         return 1
@@ -322,18 +322,18 @@ cmd_apply() {
     local a
     for a in "$@"; do
         [[ "$a" == --check ]] || continue
-        printf '%s\n' "apply: --check is a dry run; use 'computer-setup check' (it accepts the same args)" >&2
+        printf '%s\n' "apply: --check is a dry run; use 'tenon check' (it accepts the same args)" >&2
         return 64
     done
-{% if computer_setup_platform.runner.sudo_on_apply %}
+{% if tenon_platform.runner.sudo_on_apply %}
     collect_sudo_password
 {% endif %}
     run_foreground apply "$(( $# > 0 ))" local.yml "$@"
     local rc=$?
-    unset CS_SUDO_PASSWORD
+    unset TENON_SUDO_PASSWORD
     return "$rc"
 }
-{% if computer_setup_platform.runner.sudo_on_apply %}
+{% if tenon_platform.runner.sudo_on_apply %}
 
 # Rendered where the platform profile sets `sudo_on_apply` (pacman and chsh
 # need root, and a task never prompts). The password is asked here, checked once
@@ -353,7 +353,7 @@ collect_sudo_password() {
             return 0
         fi
         if printf '%s\n' "$pw" | sudo -S -k -p '' true 2>/dev/null; then
-            export CS_SUDO_PASSWORD="$pw"
+            export TENON_SUDO_PASSWORD="$pw"
             unset pw
             return 0
         fi
@@ -378,15 +378,15 @@ cmd_check() {
 # skips, when stdin is not interactive.
 cmd_upgrade() {
     if [[ ! -t 0 ]]; then
-        printf '%s\n' "computer-setup upgrade needs a terminal to confirm on." >&2
+        printf '%s\n' "tenon upgrade needs a terminal to confirm on." >&2
         printf '%s\n' "The scheduled agent runs the unattended, cask-free upgrade already." >&2
         return 1
     fi
-    echo "computer-setup upgrade brings managed tools to their latest versions:"
-    echo {{ ('  ' ~ computer_setup_platform.runner.upgrade_summary) | quote }}
-{% if computer_setup_platform.runner.upgrade_warning %}
+    echo "tenon upgrade brings managed tools to their latest versions:"
+    echo {{ ('  ' ~ tenon_platform.runner.upgrade_summary) | quote }}
+{% if tenon_platform.runner.upgrade_warning %}
     echo
-    echo {{ computer_setup_platform.runner.upgrade_warning | quote }}
+    echo {{ tenon_platform.runner.upgrade_warning | quote }}
 {% endif %}
     printf "Proceed? [y/N]: "
     local reply
@@ -395,30 +395,30 @@ cmd_upgrade() {
         echo "Aborted — nothing changed."
         return 0
     fi
-{% if computer_setup_platform.runner.upgrade_sudo_prompt %}
+{% if tenon_platform.runner.upgrade_sudo_prompt %}
     # Casks that need root get the password from the environment,
     # not `-e`, which would show it in the process list. The homebrew_cask module
     # feeds it to sudo through an askpass helper.
     local sudo_pw
     echo
-    printf '%s' {{ computer_setup_platform.runner.upgrade_sudo_prompt | quote }}
+    printf '%s' {{ tenon_platform.runner.upgrade_sudo_prompt | quote }}
     read -rs sudo_pw
     echo
-    [[ -n "$sudo_pw" ]] && export CS_SUDO_PASSWORD="$sudo_pw"
+    [[ -n "$sudo_pw" ]] && export TENON_SUDO_PASSWORD="$sudo_pw"
     unset sudo_pw
 {% endif %}
 
     # Taken after the prompts so a refusal wastes no confirmation. Logged like any
     # run: this is the one most likely to fail.
-    require_lock || { unset CS_SUDO_PASSWORD; return 1; }
+    require_lock || { unset TENON_SUDO_PASSWORD; return 1; }
     start_run_log upgrade
     sync_layers || printf '%s\n' "WARN: layer sync failed; continuing with cached content" >&2
     # Always partial: `--tags upgrade` says nothing about the rest of the machine.
     state_env upgrade 1
     "$ANSIBLE_PULL" "${ARGS[@]}" --tags upgrade \
-        -e computer_setup_upgrade_assume_yes=true local.yml "$@" 2>&1 | tee -a "$RUN_LOG"
+        -e tenon_upgrade_assume_yes=true local.yml "$@" 2>&1 | tee -a "$RUN_LOG"
     local rc=${PIPESTATUS[0]}
-    unset CS_SUDO_PASSWORD
+    unset TENON_SUDO_PASSWORD
     if [[ $rc -eq 0 ]]; then prune_logs; else close_unfinished_run; fi
     return "$rc"
 }
@@ -472,7 +472,7 @@ cmd_status() {
     fi
 
     if [[ ! -f "$LAST_RUN_FILE" ]]; then
-        echo "No run recorded yet. Run \`computer-setup check\` to populate it."
+        echo "No run recorded yet. Run \`tenon check\` to populate it."
         return 0
     fi
 
@@ -504,15 +504,15 @@ cmd_status() {
     if [[ "${failed_n:-0}" -gt 0 ]]; then
         echo "Failed:    ${failed_n} task(s):"
         state_task_list ".failed"
-        echo "           Run \`computer-setup log\` for the detail."
+        echo "           Run \`tenon log\` for the detail."
     fi
 
-    # The detail lives in `computer-setup manifest`; this is the pointer.
+    # The detail lives in `tenon manifest`; this is the pointer.
     local orphan_n
     orphan_n="$(yq -r '.orphans // [] | length' "$MANIFEST_FILE" 2>/dev/null || true)"
     if [[ "${orphan_n:-0}" =~ ^[0-9]+$ && "${orphan_n:-0}" -gt 0 ]]; then
         echo "Orphans:   ${orphan_n} path(s) no longer managed but still on disk"
-        echo "           See \`computer-setup manifest\`. Nothing is deleted automatically."
+        echo "           See \`tenon manifest\`. Nothing is deleted automatically."
     fi
 
     # A machine that silently stopped syncing looks healthy until someone checks.
@@ -527,7 +527,7 @@ cmd_status() {
     local up_days
     up_days="$(days_since_success "$UPGRADE_SUCCESS_FILE")"
     if [[ -n "$up_days" && "$up_days" -ge "$UPGRADE_BEHIND_DAYS" ]]; then
-        echo "Upgrade:   BEHIND — last successful scheduled upgrade was ${up_days} day(s) ago (see \`computer-setup log --list\`)"
+        echo "Upgrade:   BEHIND — last successful scheduled upgrade was ${up_days} day(s) ago (see \`tenon log --list\`)"
     fi
 }
 
@@ -536,7 +536,7 @@ cmd_status() {
 # run managed, not a hand-kept list that could disagree with it.
 cmd_manifest() {
     if [[ ! -f "$MANIFEST_FILE" ]]; then
-        echo "No manifest yet. Run \`computer-setup check\` to populate it."
+        echo "No manifest yet. Run \`tenon check\` to populate it."
         return 0
     fi
     if [[ "${1:-}" == "--json" ]]; then
@@ -672,8 +672,8 @@ cmd_progress() {
 }
 
 # ─── Machine declaration backup ──────────────────────────────────────────────
-# Lives in scripts/computer-setup-machine: bootstrap.sh needs the same operations
-# before this template is deployed. Same split as computer-setup-layers.
+# Lives in scripts/tenon-machine: bootstrap.sh needs the same operations
+# before this template is deployed. Same split as tenon-layers.
 #
 # The paths are supplied here so the command needs no arguments; an explicit
 # flag still wins, as with `layers`.
@@ -707,7 +707,7 @@ cmd_log() {
 
 # ─── Repository list scaffold ────────────────────────────────────────────────
 # Prints a repositories.yml built from the checkouts already on this machine.
-# To clone the missing repos: `computer-setup apply --tags repositories`. That tag
+# To clone the missing repos: `tenon apply --tags repositories`. That tag
 # is `never`, so scheduled agents and bootstrap never clone. Existing checkouts
 # are untouched.
 cmd_repos() {
@@ -717,8 +717,8 @@ cmd_repos() {
         return 1
     fi
     echo "---"
-    echo "# Generated by \`computer-setup repos\` from ${base} on $(date +%Y-%m-%d)"
-    echo "# Review, then save as {{ computer_setup_repositories_override_file }}"
+    echo "# Generated by \`tenon repos\` from ${base} on $(date +%Y-%m-%d)"
+    echo "# Review, then save as {{ tenon_repositories_override_file }}"
     echo "repositories:"
     local git_dir repo remote
     find "$base" -type d -name .git -prune 2>/dev/null | sort | while read -r git_dir; do
@@ -729,7 +729,7 @@ cmd_repos() {
         echo "    remote: \"${remote}\""
     done
 }
-{% if computer_setup_platform.system_settings == 'osx_defaults' %}
+{% if tenon_platform.system_settings == 'osx_defaults' %}
 
 cmd_capture() {
     exec "${BIN_DIR}/macos-capture" "$@"
@@ -757,7 +757,7 @@ run_scheduled() {
     # Before start_run_log, which claims the progress file; a skipped run leaves
     # no log on purpose.
     if ! acquire_lock; then
-        echo "computer-setup ${mode}: skipped, another run is in progress (pid ${LOCK_HOLDER:-unknown})"
+        echo "tenon ${mode}: skipped, another run is in progress (pid ${LOCK_HOLDER:-unknown})"
         exit 0
     fi
     start_run_log "$mode"
@@ -789,12 +789,12 @@ run_scheduled() {
     #
     # Non-interactive in every scheduled mode: anything that would prompt is
     # reported instead.
-    local -a mode_args=(-e computer_setup_interactive=false)
+    local -a mode_args=(-e tenon_interactive=false)
     if [[ "$mode" == "check" ]]; then
         mode_args+=(-e packages_brew_update=false --check --diff)
     else
-        mode_args+=(--tags upgrade -e computer_setup_upgrade_assume_yes=true
-                    -e computer_setup_upgrade_include_casks=false)
+        mode_args+=(--tags upgrade -e tenon_upgrade_assume_yes=true
+                    -e tenon_upgrade_include_casks=false)
     fi
 
     local pull_out rc changed_count partial=0
@@ -830,14 +830,14 @@ run_scheduled() {
 
     if [[ "$mode" == "check" ]]; then
         if [[ "$changed_count" -gt 0 ]]; then
-            notify "Configuration drift detected" "$changed_count task(s) would change. Run \`computer-setup apply\` to reconcile."
+            notify "Configuration drift detected" "$changed_count task(s) would change. Run \`tenon apply\` to reconcile."
             log "RESULT: drift detected ($changed_count changed task(s))"
         else
             log "RESULT: no drift"
         fi
     else
         if [[ "$changed_count" -gt 0 ]]; then
-            notify "Tools upgraded" "$changed_count task(s) changed. Casks not included — run \`computer-setup upgrade\` for those."
+            notify "Tools upgraded" "$changed_count task(s) changed. Casks not included — run \`tenon upgrade\` for those."
             log "RESULT: upgraded ($changed_count changed task(s))"
         else
             log "RESULT: already up to date"
@@ -861,9 +861,9 @@ has_arg() {
 cmd_layers_new() {
     local lname="${1:-}" ldir="${2:-}" src="${PULL_DIR}/examples/example-layer"
     [[ "$lname" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-        || { echo "Usage: computer-setup layers new NAME [DIR]  (NAME: letters, digits, . _ -)" >&2; return 64; }
+        || { echo "Usage: tenon layers new NAME [DIR]  (NAME: letters, digits, . _ -)" >&2; return 64; }
     [[ -n "$ldir" ]] || ldir="./${lname}"
-    [[ -d "$src" ]] || { echo "No reference layer at ${src}; run \`computer-setup apply\` first." >&2; return 1; }
+    [[ -d "$src" ]] || { echo "No reference layer at ${src}; run \`tenon apply\` first." >&2; return 1; }
     [[ ! -e "$ldir" ]] || { echo "${ldir} already exists." >&2; return 1; }
     cp -R "$src" "$ldir" || return 1
     # Only the name line: the layer's name must match its manifest entry.
@@ -908,7 +908,7 @@ case "$COMMAND" in
     history)            cmd_history "$@" ;;
     progress)           cmd_progress "$@" ;;
     repos)              cmd_repos "$@" ;;
-{% if computer_setup_platform.system_settings == 'osx_defaults' %}
+{% if tenon_platform.system_settings == 'osx_defaults' %}
     capture)            cmd_capture "$@" ;;
 {% endif %}
     layers)             cmd_layers "$@" ;;
@@ -916,7 +916,7 @@ case "$COMMAND" in
     _scheduled-upgrade) run_scheduled upgrade "$@" ;;
     -h|--help|help|"")  usage ;;
     *)
-        printf '%s\n' "computer-setup: unknown command '${COMMAND}'" >&2
+        printf '%s\n' "tenon: unknown command '${COMMAND}'" >&2
         printf '\n' >&2
         usage >&2
         exit 64

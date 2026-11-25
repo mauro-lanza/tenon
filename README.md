@@ -1,4 +1,4 @@
-# computer-setup
+# tenon
 
 Generalized macOS and Arch Linux provisioning framework. An Ansible **orchestrator** (the
 engine) consumes pluggable **content layers** (your data), so the core stays
@@ -19,9 +19,9 @@ comes from content layers you plug in:
 | | Repo | Contains |
 |---|---|---|
 | **Orchestrator** | this repo (public) | roles, bootstrap, contract, example layer |
-| **Public layer** | `computer-setup-layer-public` | baseline brew tools, editor settings, prompt, capabilities |
-| **Personal layer** | `computer-setup-layer-personal` (private) | personal repos & tools |
-| **Work layer** | `computer-setup-layer-work` (private) | employer repos, dbt project/schema |
+| **Public layer** | `tenon-layer-public` | baseline brew tools, editor settings, prompt, capabilities |
+| **Personal layer** | `tenon-layer-personal` (private) | personal repos & tools |
+| **Work layer** | `tenon-layer-work` (private) | employer repos, dbt project/schema |
 
 Changing jobs = swap one layer, touch nothing else.
 
@@ -41,11 +41,11 @@ content for an absent one is skipped (see "Platforms and package managers" in
 
 ```bash
 # One-liner on a fresh Mac (must be run from a terminal — bootstrap is interactive):
-bash <(curl -fsSL https://raw.githubusercontent.com/mauro-lanza/computer-setup/main/bootstrap.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/mauro-lanza/tenon/main/bootstrap.sh)
 
 # Or clone first after GitHub SSH auth (gives you the repo for later edits):
-git clone git@github.com:mauro-lanza/computer-setup.git
-cd computer-setup
+git clone git@github.com:mauro-lanza/tenon.git
+cd tenon
 ./bootstrap.sh
 ```
 
@@ -63,8 +63,8 @@ explicit message rather than silently accepting every default.
    before any layer is cloned, and readiness is confirmed with a real
    `git ls-remote` over SSH.
 1. **Layer selection & fetch** — define your layers (persisted to
-   `~/.config/computer-setup/machine.yml`), then clone each layer into
-   `~/.local/share/computer-setup/layers/<name>/`, validating `schema_version`.
+   `~/.config/tenon/machine.yml`), then clone each layer into
+   `~/.local/share/tenon/layers/<name>/`, validating `schema_version`.
 2. **Build the machine declaration** — offer the layers' presets as a starting point, then
    merge every layer's `questions.yml` into one set of decisions and every
    `capabilities.yml` into one menu, prompt for both, and write
@@ -88,7 +88,7 @@ your-layer/
 ```
 
 Add it during `bootstrap.sh` Phase 1, or edit
-the `layers:` block of `~/.config/computer-setup/machine.yml` directly (see
+the `layers:` block of `~/.config/tenon/machine.yml` directly (see
 [machine.example.yml](machine.example.yml)), which is also where merge `priority`
 is declared.
 
@@ -96,44 +96,44 @@ The **variable interface** plus `schema_version` is the public API. Merge rules,
 the capability model, and reserved keys are all specified in
 [docs/architecture.md](docs/architecture.md).
 
-## The `computer-setup` command
+## The `tenon` command
 
 One command in `~/.local/bin` operates the whole system. It owns the
 `ansible-pull` invocation — repo, branch, machine declaration, layer cache —
 so the scheduled agents and everything you type by hand can never drift apart.
 
-- `computer-setup apply` — reconcile the machine now. Streams to your terminal.
-- `computer-setup check` — the same check the 10:00 agent runs (never mutates).
-- `computer-setup upgrade` — upgrade managed tools **including casks**, with
+- `tenon apply` — reconcile the machine now. Streams to your terminal.
+- `tenon check` — the same check the 10:00 agent runs (never mutates).
+- `tenon upgrade` — upgrade managed tools **including casks**, with
   confirmation. The 09:00 agent already upgrades formulae, Galaxy collections
   and Node; casks are left to this command because they can raise a `sudo`
   prompt that an unattended agent has no TTY to answer.
-- `computer-setup log [n]` — tail the most recent run's log; `log --list` shows
+- `tenon log [n]` — tail the most recent run's log; `log --list` shows
   every log kept.
-- `computer-setup status` — what the last run did, and how long since the last
+- `tenon status` — what the last run did, and how long since the last
   successful scheduled one. Reads a state file rather than re-running anything,
   so it is instant. `--json` for machines. The scheduled modes exit 0 when the
   repo is unreachable — a closed laptop is not a fault — so this is what makes a
   machine that quietly stopped syncing distinguishable from a healthy one.
-- `computer-setup manifest`, `history [n]` and `progress` — what this system
+- `tenon manifest`, `history [n]` and `progress` — what this system
   manages, the last runs, and what a run is doing now.
-- `computer-setup machine <init|push|list|pull>` — back up this machine's
+- `tenon machine <init|push|list|pull>` — back up this machine's
   `machine.yml` to a **private** repo, one file per machine, and restore
   another machine's. `bootstrap.sh` offers the same restore on a fresh Mac,
   before layers are configured — a restored declaration names its own. `machine.yml` is the whole declaration — layers, answers
   and selections — and `bootstrap.sh --answers` replays one non-interactively,
   so a backup *is* a restorable machine. `pull` writes a file for you to review and
   pass to `--answers`; it never overwrites the live `machine.yml`.
-- `computer-setup repos` — scaffold a `repositories.yml` from this machine's
+- `tenon repos` — scaffold a `repositories.yml` from this machine's
   checkouts. To clone the ones that are *missing*, run
-  `computer-setup apply --tags repositories`.
-- `computer-setup capture` — read-only; diffs this machine's live macOS
+  `tenon apply --tags repositories`.
+- `tenon capture` — read-only; diffs this machine's live macOS
   `defaults` against the values declared by your layers and emits paste-ready
   YAML, so a setting you tweaked in System Settings can be adopted back into a
-  layer. `computer-setup capture --domain <domain>` dumps every key in a domain.
-- `computer-setup layers sync …` — refresh the content-layer cache. `layers lint` checks references (and `machine.yml` selections); `layers new NAME` scaffolds a layer. Fork the engine with `BOOTSTRAP_OWNER` (see `docs/operations.md`).
+  layer. `tenon capture --domain <domain>` dumps every key in a domain.
+- `tenon layers sync …` — refresh the content-layer cache. `layers lint` checks references (and `machine.yml` selections); `layers new NAME` scaffolds a layer. Fork the engine with `BOOTSTRAP_OWNER` (see `docs/operations.md`).
 
-`computer-setup` with no arguments prints this list.
+`tenon` with no arguments prints this list.
 
 ## Documentation
 

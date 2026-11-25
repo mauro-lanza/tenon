@@ -24,7 +24,7 @@ git_global_gitignore_entries: []
 # to append one `include.path`. See "git config is included, not imposed" in
 # docs/operations.md.
 git_managed_config_dir: "{{ home_dir }}/.config/git"
-git_managed_config_path: "{{ git_managed_config_dir }}/computer-setup.gitconfig"
+git_managed_config_path: "{{ git_managed_config_dir }}/tenon.gitconfig"
 # git's own XDG location for the global ignore file. `core.excludesFile` is
 # still written explicitly rather than relying on git reading this path by
 # default, because git only falls back to it when core.excludesFile is UNSET —

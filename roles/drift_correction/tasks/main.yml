@@ -1,11 +1,11 @@
 ---
-# Deploys the `computer-setup` command and its helper. The scheduled jobs that
+# Deploys the `tenon` command and its helper. The scheduled jobs that
 # invoke it are declared as `scheduled_agents_engine` and installed by the
 # `scheduled_agents` role, which runs next — there is one LaunchAgent
 # implementation, not two.
 - name: Ensure wrapper script directory exists
   ansible.builtin.file:
-    path: "{{ computer_setup_bin_dir }}"
+    path: "{{ tenon_bin_dir }}"
     state: directory
     mode: "0755"
 
@@ -14,7 +14,7 @@
 # and path list is still a description of this machine and not the world's.
 - name: Ensure state directory exists
   ansible.builtin.file:
-    path: "{{ computer_setup_state_dir }}"
+    path: "{{ tenon_state_dir }}"
     state: directory
     mode: "0700"
 
@@ -23,17 +23,17 @@
 - name: Deploy the standalone helpers
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/scripts/{{ item }}"
-    dest: "{{ computer_setup_bin_dir }}/{{ item }}"
+    dest: "{{ tenon_bin_dir }}/{{ item }}"
     mode: "0755"
   loop:
-    - computer-setup-layers
-    - computer-setup-machine
+    - tenon-layers
+    - tenon-machine
 
 # No handler notification: launchd re-reads the PROGRAM at each scheduled fire,
 # so a rewritten runner needs no reload. Only a changed plist does, and
 # scheduled_agents owns and notifies that itself.
-- name: Deploy the computer-setup command
+- name: Deploy the tenon command
   ansible.builtin.template:
-    src: computer-setup.j2
-    dest: "{{ computer_setup_command_path }}"
+    src: tenon.j2
+    dest: "{{ tenon_command_path }}"
     mode: "0755"

@@ -1,6 +1,6 @@
 ---
 # One role for every package manager. core detects which managers this machine
-# has (from the platform profile) and resolves `computer_setup_packages`:
+# has (from the platform profile) and resolves `tenon_packages`:
 # manager -> names, from the layers' `packages_baseline` plus the selected
 # capabilities' `packages:`. Each manager is one task file per action:
 #   tasks/converge/<manager>.yml  install what is missing (or report it under --check)

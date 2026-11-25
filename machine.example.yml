@@ -1,13 +1,13 @@
 ---
 # Example MACHINE DECLARATION.
 #
-# Copy to ~/.config/computer-setup/machine.yml (bootstrap.sh writes this for you
+# Copy to ~/.config/tenon/machine.yml (bootstrap.sh writes this for you
 # interactively). One file, because it is one decision: the capability ids under
 # `selected_capabilities` are meaningless without the layers that define them,
 # so half of this file restores nothing.
 #
 # ── layers ───────────────────────────────────────────────────────────────────
-# Cloned into ~/.local/share/computer-setup/layers/<name>/ and merged in
+# Cloned into ~/.local/share/tenon/layers/<name>/ and merged in
 # ascending priority order — higher priority wins on scalar conflicts; lists
 # append.
 #   name:     unique layer name; also the layer-cache directory name
@@ -21,15 +21,15 @@
 #             A layer is code that runs as you; pin one you do not control.
 layers:
   - name: public
-    repo: git@github.com:your-org/computer-setup-layer-public.git
+    repo: git@github.com:your-org/tenon-layer-public.git
     priority: 10
 
   - name: personal
-    repo: git@github.com:your-org/computer-setup-layer-personal.git
+    repo: git@github.com:your-org/tenon-layer-personal.git
     priority: 20
 
   - name: work
-    repo: git@github.com:your-org/computer-setup-layer-work.git
+    repo: git@github.com:your-org/tenon-layer-work.git
     priority: 30
 
 # ── answers ──────────────────────────────────────────────────────────────────

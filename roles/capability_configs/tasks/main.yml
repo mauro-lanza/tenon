@@ -6,9 +6,9 @@
     name: core
     tasks_from: deploy_layer_file
   vars:
-    computer_setup_lookup_key: "{{ item.src }}"
-    computer_setup_deploy_dest: "{{ item.dest }}"
-    computer_setup_deploy_executable: "{{ item.executable | default(false) }}"
-  loop: "{{ computer_setup_config_deploys }}"
+    tenon_lookup_key: "{{ item.src }}"
+    tenon_deploy_dest: "{{ item.dest }}"
+    tenon_deploy_executable: "{{ item.executable | default(false) }}"
+  loop: "{{ tenon_config_deploys }}"
   loop_control:
     label: "{{ item.dest | basename }}"

@@ -41,21 +41,21 @@
                    ~ (_path | basename | regex_replace('\.j2$', '')),
            'template': _path.endswith('.j2'),
            'enabled': (_cap | length == 0)
-                      or (_cap in computer_setup_active_capabilities)
+                      or (_cap in tenon_active_capabilities)
          }] }}
   loop: "{{ query('ansible.builtin.fileglob', *_globs) }}"
   loop_control:
     loop_var: _path
     label: "{{ _layer.name }}/{{ _path | basename }}"
   vars:
-    _layers: "{{ computer_setup_active_layers | default([]) }}"
+    _layers: "{{ tenon_active_layers | default([]) }}"
     _globs: >-
       {{ _layers | map(attribute='name')
-         | map('regex_replace', '^', computer_setup_layer_cache ~ '/')
+         | map('regex_replace', '^', tenon_layer_cache ~ '/')
          | map('regex_replace', '$', '/files/shell/')
          | product(['*.zsh', '*.zsh.j2']) | map('join') | list }}
     _layer: >-
-      {{ _layers | selectattr('name', 'eq', _path | relpath(computer_setup_layer_cache) | split('/') | first)
+      {{ _layers | selectattr('name', 'eq', _path | relpath(tenon_layer_cache) | split('/') | first)
          | first }}
     _cap: >-
       {{ (lookup('ansible.builtin.file', _path)
@@ -134,10 +134,10 @@
     name: core
     tasks_from: deploy_layer_file
   vars:
-    computer_setup_lookup_key: "{{ item.key }}"
-    computer_setup_deploy_dest: "{{ item.dest }}"
-    computer_setup_deploy_backup: "{{ item.backup | default(false) }}"
-    computer_setup_deploy_notify: Shell config changed
+    tenon_lookup_key: "{{ item.key }}"
+    tenon_deploy_dest: "{{ item.dest }}"
+    tenon_deploy_backup: "{{ item.backup | default(false) }}"
+    tenon_deploy_notify: Shell config changed
   loop: "{{ shell_config_files }}"
   loop_control:
     label: "{{ item.dest | basename }}"
@@ -174,20 +174,20 @@
 
     - name: Change the login shell
       ansible.builtin.command:
-        argv: "{{ computer_setup_sudo_argv + ['chsh', '-s', shell_login_shell, ansible_facts['user_id']] }}"
-      environment: "{{ computer_setup_sudo_env }}"
+        argv: "{{ tenon_sudo_argv + ['chsh', '-s', shell_login_shell, ansible_facts['user_id']] }}"
+      environment: "{{ tenon_sudo_env }}"
       changed_when: true
       notify: Shell config changed
       when:
         - not ansible_check_mode
-        - computer_setup_sudo_ready | bool
+        - tenon_sudo_ready | bool
 
     - name: Explain why the login shell was not changed
       ansible.builtin.debug:
         msg: >-
           The login shell needs root to change and no sudo password was given.
-          Re-run `computer-setup apply` and enter it, or run:
+          Re-run `tenon apply` and enter it, or run:
           chsh -s {{ shell_login_shell }}
       when:
         - not ansible_check_mode
-        - not (computer_setup_sudo_ready | bool)
+        - not (tenon_sudo_ready | bool)

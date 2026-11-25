@@ -6,15 +6,15 @@
 # The primitive behind every "a layer supplies this config file" role.
 #
 # Inputs:
-#   computer_setup_lookup_key           key resolved across layer search dirs
-#   computer_setup_deploy_dest          destination path (parent dir is created)
-#   computer_setup_deploy_executable    deploy 0755 instead of leaving the mode
+#   tenon_lookup_key           key resolved across layer search dirs
+#   tenon_deploy_dest          destination path (parent dir is created)
+#   tenon_deploy_executable    deploy 0755 instead of leaving the mode
 #                                       unmanaged (default false; for files that
 #                                       land on PATH, e.g. ~/.local/bin/*)
-#   computer_setup_deploy_backup        keep a timestamped backup of an existing
+#   tenon_deploy_backup        keep a timestamped backup of an existing
 #                                       destination (default false; set for files
 #                                       a user may have authored, e.g. ~/.zshrc)
-#   computer_setup_deploy_notify        handler name(s) to notify (default none)
+#   tenon_deploy_notify        handler name(s) to notify (default none)
 #
 # Resolution is TWO-STEP, and the same for every caller:
 #   1. `<key>.j2` in the layers' templates/ dirs  -> rendered as a template
@@ -30,7 +30,7 @@
 # a file or a template across all layers, not both: step 1 wins over step 2
 # regardless of layer priority.
 
-- name: "Reset resolution state for {{ computer_setup_lookup_key }}"
+- name: "Reset resolution state for {{ tenon_lookup_key }}"
   # set_fact persists across include_tasks invocations: without this, a key that
   # resolves to nothing would inherit the PREVIOUS key's source and deploy it to
   # the wrong destination.
@@ -38,41 +38,41 @@
     _cs_tpl_src: ""
     _cs_file_src: ""
 
-- name: "Resolve layer template: {{ computer_setup_lookup_key }}"
+- name: "Resolve layer template: {{ tenon_lookup_key }}"
   ansible.builtin.set_fact:
     _cs_tpl_src: "{{ lookup('ansible.builtin.first_found', _params, errors='ignore') }}"
   vars:
     _params:
-      files: ["{{ computer_setup_lookup_key }}.j2"]
-      paths: "{{ computer_setup_template_search_dirs }}"
+      files: ["{{ tenon_lookup_key }}.j2"]
+      paths: "{{ tenon_template_search_dirs }}"
 
-- name: "Resolve layer file: {{ computer_setup_lookup_key }}"
+- name: "Resolve layer file: {{ tenon_lookup_key }}"
   ansible.builtin.set_fact:
     _cs_file_src: "{{ lookup('ansible.builtin.first_found', _params, errors='ignore') }}"
   vars:
     _params:
-      files: ["{{ computer_setup_lookup_key }}"]
-      paths: "{{ computer_setup_file_search_dirs }}"
+      files: ["{{ tenon_lookup_key }}"]
+      paths: "{{ tenon_file_search_dirs }}"
   when: _cs_tpl_src | default('', true) | length == 0
 
-- name: "Select the resolved source for {{ computer_setup_deploy_dest | basename }}"
+- name: "Select the resolved source for {{ tenon_deploy_dest | basename }}"
   ansible.builtin.set_fact:
     _cs_deploy_src: "{{ _cs_tpl_src or _cs_file_src or '' }}"
     _cs_deploy_as_template: "{{ (_cs_tpl_src | default('', true) | length) > 0 }}"
 
-- name: "Deploy {{ computer_setup_deploy_dest | basename }} when a layer supplies it"
+- name: "Deploy {{ tenon_deploy_dest | basename }} when a layer supplies it"
   when: _cs_deploy_src | length > 0
   block:
     # Skipped when the parent is $HOME itself — which happens for any dest sitting
     # directly in the home directory, ~/.zshrc being the one in practice. $HOME
     # always exists, so "create it" is meaningless, and `mode: 0755` would have
     # this role assert a permission on the user's home directory.
-    - name: "Ensure parent directory exists: {{ computer_setup_deploy_dest | dirname }}"
+    - name: "Ensure parent directory exists: {{ tenon_deploy_dest | dirname }}"
       ansible.builtin.file:
-        path: "{{ computer_setup_deploy_dest | dirname }}"
+        path: "{{ tenon_deploy_dest | dirname }}"
         state: directory
         mode: "0755"
-      when: (computer_setup_deploy_dest | dirname) != home_dir
+      when: (tenon_deploy_dest | dirname) != home_dir
 
     # Mode is deliberately UNMANAGED below unless the file has to be executable.
     # Pinning a mode makes any third party that chmods its own config file (an
@@ -81,22 +81,22 @@
     # destination already has, so only real content changes register as drift.
     # It is spelled out at both tasks rather than hoisted into a fact: `set_fact`
     # DROPS an omit placeholder, leaving the var undefined and the task erroring.
-    - name: "Deploy layer template: {{ computer_setup_deploy_dest | basename }}"
+    - name: "Deploy layer template: {{ tenon_deploy_dest | basename }}"
       ansible.builtin.template:
         src: "{{ _cs_deploy_src }}"
-        dest: "{{ computer_setup_deploy_dest }}"
+        dest: "{{ tenon_deploy_dest }}"
         # Unlike copy, template cannot inherit the source file's executable bit, so
         # a script only lands runnable if the capability asked for it.
-        mode: "{{ '0755' if (computer_setup_deploy_executable | default(false) | bool) else omit }}"
-        backup: "{{ computer_setup_deploy_backup | default(false) | bool }}"
+        mode: "{{ '0755' if (tenon_deploy_executable | default(false) | bool) else omit }}"
+        backup: "{{ tenon_deploy_backup | default(false) | bool }}"
       when: _cs_deploy_as_template | bool
-      notify: "{{ computer_setup_deploy_notify | default([]) }}"
+      notify: "{{ tenon_deploy_notify | default([]) }}"
 
-    - name: "Deploy layer file: {{ computer_setup_deploy_dest | basename }}"
+    - name: "Deploy layer file: {{ tenon_deploy_dest | basename }}"
       ansible.builtin.copy:
         src: "{{ _cs_deploy_src }}"
-        dest: "{{ computer_setup_deploy_dest }}"
-        mode: "{{ '0755' if (computer_setup_deploy_executable | default(false) | bool) else omit }}"
-        backup: "{{ computer_setup_deploy_backup | default(false) | bool }}"
+        dest: "{{ tenon_deploy_dest }}"
+        mode: "{{ '0755' if (tenon_deploy_executable | default(false) | bool) else omit }}"
+        backup: "{{ tenon_deploy_backup | default(false) | bool }}"
       when: not (_cs_deploy_as_template | bool)
-      notify: "{{ computer_setup_deploy_notify | default([]) }}"
+      notify: "{{ tenon_deploy_notify | default([]) }}"

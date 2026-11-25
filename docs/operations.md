@@ -11,10 +11,10 @@ failures with known causes and recovery steps, see [findings.md](findings.md).
 
 ```bash
 # Reconcile now
-computer-setup apply          # args pass through to ansible-pull; --check is refused, use `check`
+tenon apply          # args pass through to ansible-pull; --check is refused, use `check`
 
 # What would change, without changing it (the same check the 10:00 agent runs)
-computer-setup check
+tenon check
 
 # A fully converged machine reports:  changed=0  failed=0
 ```
@@ -22,7 +22,7 @@ computer-setup check
 Ask what the last run actually did, without re-running anything:
 
 ```bash
-computer-setup status
+tenon status
 ```
 
 ```
@@ -39,14 +39,14 @@ that quietly stopped syncing weeks ago otherwise looks exactly like a healthy
 one. Past `drift_correction_stale_after_days` (14 by default) it reports
 `STALE`.
 
-`computer-setup status --json` prints the same thing for machines. It is the
+`tenon status --json` prints the same thing for machines. It is the
 interface a UI would consume; see "Run state" in
 [architecture.md](architecture.md) for the shape and its guarantees.
 
 Ask what this system owns:
 
 ```bash
-computer-setup manifest
+tenon manifest
 ```
 
 ```
@@ -72,7 +72,7 @@ which nothing removes automatically.
 Ask what this machine has been doing:
 
 ```bash
-computer-setup history 10
+tenon history 10
 ```
 
 ```
@@ -84,28 +84,28 @@ FINISHED                   MODE     RESULT    CHANGED   FAILED  DURATION
 ```
 
 Each entry records the path to that run's own log, so `history` answers *when*
-something happened and `computer-setup log` answers *what*. History keeps
+something happened and `tenon log` answers *what*. History keeps
 roughly the last 500 runs; logs are pruned on a separate schedule.
 
 Clone repositories that are listed but missing:
 
 ```bash
-computer-setup apply --tags repositories
+tenon apply --tags repositories
 ```
 
 ## The engine's runtime is pinned
 
 The engine does not run whatever `ansible` Homebrew has. It runs a Python and an
 ansible-core pinned in `runtime.yml`, installed by `uv` into
-`~/.local/share/computer-setup/runtime/`, plus mitogen. There is deliberately no
+`~/.local/share/tenon/runtime/`, plus mitogen. There is deliberately no
 `ansible` on your `PATH`.
 
 ```bash
 # Reconcile the runtime with runtime.yml (after bumping a version there)
-computer-setup apply --tags runtime
+tenon apply --tags runtime
 
 # What the engine is actually running
-~/.local/share/computer-setup/runtime/bin/ansible --version
+~/.local/share/tenon/runtime/bin/ansible --version
 ```
 
 `check` reports a runtime that has drifted from the pin as changed, naming both
@@ -117,8 +117,8 @@ on it through the normal sync; there is no ordering of steps to arrange.
 ### When a run misbehaves, take mitogen out of the picture first
 
 ```bash
-CS_NO_MITOGEN=1 computer-setup apply
-CS_NO_MITOGEN=1 ./scripts/check.sh
+TENON_NO_MITOGEN=1 tenon apply
+TENON_NO_MITOGEN=1 ./scripts/check.sh
 ```
 
 Mitogen replaces Ansible's execution model, so it is the first thing to rule out
@@ -135,7 +135,7 @@ so the gate always tests what production runs.
 ## git config is included, not imposed
 
 `~/.gitconfig` is **not** owned by this setup. It owns
-`~/.config/git/computer-setup.gitconfig` and reaches `~/.gitconfig` only to
+`~/.config/git/tenon.gitconfig` and reaches `~/.gitconfig` only to
 append one `include.path`. Anything you put in `~/.gitconfig` — signing keys,
 credential helpers, your own `includeIf` blocks — is preserved.
 
@@ -170,14 +170,14 @@ alone tells you nothing.
 |---|---|
 | `~/.zshrc` | Replaced from the layer-provided `zshrc` (timestamped backup kept). Edit it in the layer. |
 | `~/.zsh/*.zsh` managed snippets | Regenerated from the layers' `files/shell/*.zsh`. |
-| `~/.config/git/computer-setup.gitconfig` | Re-rendered whole. Anything not declared in a layer is dropped. `~/.gitconfig` itself is only appended to. |
+| `~/.config/git/tenon.gitconfig` | Re-rendered whole. Anything not declared in a layer is dropped. `~/.gitconfig` itself is only appended to. |
 | `~/.config/git/ignore` | Replaced entirely from `git_global_gitignore_entries`. `core.excludesFile` is pointed at it explicitly. |
 | `~/.zsh/configs/p10k.zsh` | Replaced from the layer-provided `p10k.zsh`. Sourced by name via `POWERLEVEL9K_CONFIG_FILE`, not by the snippet glob, and never garbage-collected. |
 | macOS defaults | `osx_defaults` enforces the layer-declared value; System Settings changes are reverted. |
 | NVM default alias | Mismatch is detected and `nvm alias default <declared>` re-run. |
 | tfenv active version | Reverted to `runtimes_tfenv_terraform_version` (and never auto-upgraded). |
 | Capability config files | Re-deployed from the providing layer whenever the capability is active. |
-| `computer-setup`, the engine's own LaunchAgent plists | Regenerated, then the agents are reloaded. |
+| `tenon`, the engine's own LaunchAgent plists | Regenerated, then the agents are reloaded. |
 | Layer-declared scheduled agents | Plists regenerated and reloaded. An agent whose `requires_capability` is no longer active, or whose entry is removed, is booted out of launchd and its plist deleted — a stale plist would otherwise keep firing across reboots. |
 
 ### Additive — nothing of yours is removed
@@ -191,8 +191,8 @@ alone tells you nothing.
 
 | What you change | Behaviour |
 |---|---|
-| Extra files in `~/.zsh/` | Left on disk. Cleanup only removes paths recorded in `~/.zsh/.computer-setup-snippets` from a previous run. |
-| `~/.config/computer-setup/machine.yml` edited by hand | Read as-is. Malformed YAML falls back to defaults with a warning. |
+| Extra files in `~/.zsh/` | Left on disk. Cleanup only removes paths recorded in `~/.zsh/.tenon-snippets` from a previous run. |
+| `~/.config/tenon/machine.yml` edited by hand | Read as-is. Malformed YAML falls back to defaults with a warning. |
 | Local changes in a listed repo | Never touched. Cloning uses `update: false` and only clones repos that are entirely absent. |
 
 ## Non-destructive guarantees
@@ -247,12 +247,12 @@ declaring is never removed, and nothing reports that either.
 
 Every run writes its own file, named for when it started and what it was:
 
-    ~/Library/Logs/computer-setup/20260915-171312-check.log
+    ~/Library/Logs/tenon/20260915-171312-check.log
 
 ```bash
-computer-setup log          # the most recent run, last 100 lines
-computer-setup log 500      # more of it
-computer-setup log --list   # every run kept, newest first
+tenon log          # the most recent run, last 100 lines
+tenon log 500      # more of it
+tenon log --list   # every run kept, newest first
 ```
 
 Interactive runs are logged too. They still print to your terminal exactly as
@@ -264,7 +264,7 @@ Successful runs are pruned after `drift_correction_log_retention_days` (30).
 back to weeks later. Pruning only happens after a run that itself succeeded: a
 machine that is failing should not be tidying away the evidence.
 
-`computer-setup history` lists recent runs, and each entry records the path to
+`tenon history` lists recent runs, and each entry records the path to
 its own log.
 
 ### Layer-declared agents log separately
@@ -287,7 +287,7 @@ the job is loaded and what it last exited with.
 ## Watching a run happen
 
 ```bash
-computer-setup progress
+tenon progress
 ```
 
 ```
@@ -305,14 +305,14 @@ animating a bar for a process that died.
 
 ## Credentials
 
-`computer-setup status` reports a missing sign-in like any other drift:
+`tenon status` reports a missing sign-in like any other drift:
 
 ```
 Drift:     1 task(s) would change:
   - Check for each declared credential  →  opencode-corp
 ```
 
-Run `computer-setup apply` **from a terminal** to be prompted through it. The
+Run `tenon apply` **from a terminal** to be prompted through it. The
 09:00 and 10:00 agents will never attempt it — the flows are interactive and a
 LaunchAgent has no terminal to answer them — so an unattended run reports it and
 moves on. It goes quiet by itself once you have signed in.
@@ -330,7 +330,7 @@ and completion lines in `.zshrc`). To bring one under management:
 
 1. Add it as a capability in a layer's `capabilities.yml`, then add that
    capability's `id` to `selected_capabilities` in
-   `~/.config/computer-setup/machine.yml`. Selection is by capability id, not by
+   `~/.config/tenon/machine.yml`. Selection is by capability id, not by
    package name.
 2. Apply, so Homebrew installs the managed copy.
 3. Remove the manual install dir and its `.zshrc` lines.
@@ -351,10 +351,10 @@ non-interactively, and `check.sh` asserts a written `machine.yml` is a valid
 answers file, so **a backup is a restorable machine**.
 
 ```bash
-computer-setup machine init   # choose the private repo and name this machine
-computer-setup machine push   # back up the current machine.yml
-computer-setup machine list   # machines backed up in the repo
-computer-setup machine pull work-macbook
+tenon machine init   # choose the private repo and name this machine
+tenon machine push   # back up the current machine.yml
+tenon machine list   # machines backed up in the repo
+tenon machine pull work-macbook
 ```
 
 One file per machine under `machines/<name>.yml`, so a laptop and a desktop keep
@@ -376,8 +376,8 @@ inventory. Do not make it public, and do not use a secret gist for it — a secr
 gist is unlisted, not access-controlled, and anyone with the URL can read it.
 
 It is also **not a content layer**. Layers are force-synced (fetch + hard reset)
-by `computer-setup-layers`, which would destroy commits here waiting to push. It
-is cloned separately to `~/.local/share/computer-setup/backups`.
+by `tenon-layers`, which would destroy commits here waiting to push. It
+is cloned separately to `~/.local/share/tenon/backups`.
 
 ### Restoring onto a fresh Mac
 
@@ -401,29 +401,54 @@ The prompt is skipped when it would be wrong: a non-interactive run, an explicit
 `--answers`, an already-declared machine, or no backup repo configured. It is
 also never fatal — an unreachable backup repo warns and setup continues.
 
-## Removing computer-setup
+## Removing tenon
 
 There is no uninstall command, and nothing it installed is removed for you
 (see "Non-destructive guarantees"). To stop and remove the engine itself:
 
 ```bash
 for l in check upgrade; do
-  launchctl bootout "gui/$(id -u)/com.computer-setup.$l" 2>/dev/null
-  rm -f ~/Library/LaunchAgents/com.computer-setup.$l.plist
+  launchctl bootout "gui/$(id -u)/com.tenon.$l" 2>/dev/null
+  rm -f ~/Library/LaunchAgents/com.tenon.$l.plist
 done
-rm -rf ~/.local/share/computer-setup ~/.local/state/computer-setup \
-       ~/Library/Logs/computer-setup ~/.ansible/pull/computer-setup
-rm -f ~/.local/bin/computer-setup*
-# Keep ~/.config/computer-setup/machine.yml if you may come back: it is the
-# declaration. Layer-declared agents (e.g. com.computer-setup.*) are in the manifest.
+rm -rf ~/.local/share/tenon ~/.local/state/tenon \
+       ~/Library/Logs/tenon ~/.ansible/pull/tenon
+rm -f ~/.local/bin/tenon*
+# Keep ~/.config/tenon/machine.yml if you may come back: it is the
+# declaration. Layer-declared agents (e.g. com.tenon.*) are in the manifest.
 ```
 
 Managed files (`~/.zshrc`, `~/.zsh/`, `~/.config/git/`) stay on disk; list them with
-`computer-setup manifest` before deleting the state directory.
+`tenon manifest` before deleting the state directory.
+
+## Migrating from computer-setup
+
+One-time steps for a machine set up before the rename to tenon. Delete this section once every machine has moved.
+
+```bash
+# macOS: stop the old agents (also any layer-declared ones listed in the manifest)
+for p in ~/Library/LaunchAgents/com.computer-setup.*.plist; do
+  launchctl bootout "gui/$(id -u)/$(basename "$p" .plist)" 2>/dev/null
+  rm -f "$p"
+done
+rm -f ~/Library/LaunchAgents/.computer-setup-agents
+
+rm -f ~/.local/bin/computer-setup*
+rm -rf ~/.ansible/pull/computer-setup
+mv ~/.config/computer-setup ~/.config/tenon
+mv ~/.local/share/computer-setup ~/.local/share/tenon
+mv ~/.local/state/computer-setup ~/.local/state/tenon
+mv ~/Library/Logs/computer-setup ~/Library/Logs/tenon   # macOS only
+for d in ~/.local/share/tenon/layers/computer-setup-layer-*; do
+  mv "$d" "${d/computer-setup-layer-/tenon-layer-}"
+done
+```
+
+Then edit `~/.config/tenon/machine.yml`: rename each layer `computer-setup-layer-*` to `tenon-layer-*` and update its URL. Run bootstrap from the new URL (or `tenon apply --tags runtime` if the CLI is already installed), then `tenon apply`, and delete the orphans it reports.
 
 ## Running your own fork
 
 `BOOTSTRAP_OWNER=<github-user-or-org> bash bootstrap.sh` clones the engine from
-`<owner>/computer-setup` instead, and the choice is passed to the play so the
+`<owner>/tenon` instead, and the choice is passed to the play so the
 scheduled agents follow the same repo. `BOOTSTRAP_BRANCH=<branch|tag|sha>` pins
 the engine to a ref the same way.

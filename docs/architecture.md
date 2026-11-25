@@ -1,6 +1,6 @@
 # Architecture
 
-`computer-setup` is the orchestrator: it owns bootstrap, the Ansible roles, the
+`tenon` is the orchestrator: it owns bootstrap, the Ansible roles, the
 merge logic, and the layer contract. Personal, work, and shareable machine
 content live in content layers.
 
@@ -19,7 +19,7 @@ templates/        # optional templates resolved by roles
 ```
 
 Merge `priority` is declared in the *manifest*
-(the `layers:` block of `~/.config/computer-setup/machine.yml`), not in
+(the `layers:` block of `~/.config/tenon/machine.yml`), not in
 `layer.yml` — one source of
 truth, so a layer cannot disagree with the machine about its own ordering.
 
@@ -27,14 +27,14 @@ The public API is the role variable interface plus this `schema_version`. A
 layer must declare exactly the version the orchestrator supports, so a breaking
 change (2: `packages:` mappings replace `homebrew_baseline_*`) rejects old layers
 instead of silently ignoring their vars. Bump it in all three places that state it —
-`computer_setup_schema_version` in `local.yml`, `SCHEMA_VERSION_MAX` in
-`bootstrap.sh`, and the default in `scripts/computer-setup-layers` — when
+`tenon_schema_version` in `local.yml`, `SCHEMA_VERSION_MAX` in
+`bootstrap.sh`, and the default in `scripts/tenon-layers` — when
 changing that contract in a breaking way. They cannot import from each other, so
 `check.sh` asserts they agree instead.
 
 A layer that disagrees with the engine is repaired, not just rejected: core's
 pre-tasks compare each cached layer's version with the engine's and, on a
-mismatch, re-run the engine's own `scripts/computer-setup-layers sync` with the
+mismatch, re-run the engine's own `scripts/tenon-layers sync` with the
 engine's version. The installed runner bakes the version in at deploy time, so
 after an engine update it still syncs with the old one; this step is what lets
 the first run after the update succeed. A layer whose origin has not moved to
@@ -85,13 +85,13 @@ merging, so the consuming role's own default applies.
 ## The capability model
 
 Selecting a tool records its capability `id` in `selected_capabilities` — the
-only selection state in `~/.config/computer-setup/machine.yml`. The engine merges every layer's
+only selection state in `~/.config/tenon/machine.yml`. The engine merges every layer's
 `capabilities.yml` into a registry and derives the whole role interface from it,
 so the engine hardcodes no package names or paths:
 
 - **active capabilities** = `selected_capabilities` ∪ any capability whose
   `adopt_if_present` path exists (adopting an already-installed tool).
-- **packages** (`computer_setup_packages_optional`, manager -> names) come from
+- **packages** (`tenon_packages_optional`, manager -> names) come from
   the *selected* capabilities' `packages:` mapping, and **extensions**
   (`extension_optional`, extension manager -> ids) from their `extensions:`
   mapping. The engine names no editor; extension managers are layer data
@@ -106,8 +106,8 @@ so the engine hardcodes no package names or paths:
   in via `--answers` from an older machine — still installs it. That is
   tolerable because machine.yml is the machine's own declaration, but it
   means `requires` constrains what you are *asked*, not what can be *applied*.
-- **config deploys** (`computer_setup_config_deploys`) and **reminders**
-  (`computer_setup_reminders`) come from the *active* capabilities. A `config:`
+- **config deploys** (`tenon_config_deploys`) and **reminders**
+  (`tenon_reminders`) come from the *active* capabilities. A `config:`
   entry is `{src, dest, executable?}`. The deployed file's **mode is left
   unmanaged** unless `executable: true` asks for `0755` — pinning a mode makes
   any tool that chmods its own config file register as drift on every scheduled
@@ -148,13 +148,13 @@ it is on. `check.sh` renders the runner once per profile and checks each.
 
 **Package managers are detected, not declared.** `core` stats the profile's
 candidate managers (macOS: `brew`, `cask`; Linux: `pacman`, `aur` via paru,
-`flatpak`) into `computer_setup_package_managers`, then resolves
-`computer_setup_packages` (manager -> names): each layer's `packages_baseline`
+`flatpak`) into `tenon_package_managers`, then resolves
+`tenon_packages` (manager -> names): each layer's `packages_baseline`
 plus the selected capabilities' `packages:`, for detected managers only. The
 `packages` role loops over those, one task file per manager and action
 (`converge/<m>.yml`, `upgrade/<m>.yml`), so adding a manager is a profile entry
 plus two task files. A selected capability with no key for any detected manager
-is reported (`computer_setup_uninstallable_selections`) rather than silently
+is reported (`tenon_uninstallable_selections`) rather than silently
 installing nothing; its config still deploys. The bootstrap menu applies the
 same test to the profile's candidates, so capabilities, preset entries and
 question options (via `implies:`) this platform cannot install are never
@@ -180,9 +180,9 @@ as installed and is not duplicated. Nothing is ever removed.
 ### sudo on Linux
 
 pacman, AUR installs and `chsh` need root, and an Ansible task never has a
-terminal to prompt on. On Linux, `computer-setup apply` (and `bootstrap.sh`)
+terminal to prompt on. On Linux, `tenon apply` (and `bootstrap.sh`)
 asks for the sudo password up front, **validates it once** with
-`sudo -S -k true`, and exports it as `CS_SUDO_PASSWORD` — never `-e`, which
+`sudo -S -k true`, and exports it as `TENON_SUDO_PASSWORD` — never `-e`, which
 would show it in the process list. Tasks run `sudo -A` with `scripts/askpass` as
 `SUDO_ASKPASS`; the script holds no secret, it echoes the variable the task
 inherited. The password is never put in a fact (`-v` prints facts).
@@ -203,7 +203,7 @@ mechanism exists to prevent.
 
 A layer declares questions in `questions.yml`; they merge union-by-id in
 descending priority exactly like capabilities. The **answer** is machine-local
-and lives under `answers:` in `~/.config/computer-setup/machine.yml`.
+and lives under `answers:` in `~/.config/tenon/machine.yml`.
 
 | Field | Meaning |
 |---|---|
@@ -246,7 +246,7 @@ the *machine* makes. `repositories_base_dir` is the clearest — `~/Projects` wa
 a play var, reserved, and duplicated as a literal in the shell CLI, so there was
 no way to answer it at all.
 
-`computer_setup_machine_tier_keys` is the enumeration of keys a **question** may
+`tenon_machine_tier_keys` is the enumeration of keys a **question** may
 set although a layer's `vars.yml` may not:
 
 | Key | Decision |
@@ -269,7 +269,7 @@ prompt shows it, and the machine's answer wins. Unreserving the keys outright
 would invert that, because a layer's `vars.yml` is merged by `set_fact` and
 would silently beat the machine's own declaration.
 Everything that decides *what code runs* stays unreachable from every
-direction: `computer_setup_repo_url`, `computer_setup_repo_branch`, the upgrade
+direction: `tenon_repo_url`, `tenon_repo_branch`, the upgrade
 auto-approval switches and the `ansible_*` controls are not in the tier and must
 not be added to it. Widening the tier is a security decision, which is why it is
 an enumeration rather than a prefix.
@@ -282,7 +282,7 @@ naming the same key is still rejected. A door, not a hole.
 
 A `set:` payload lands in play scope exactly as a layer var does. Questions are
 **layer** content — only the answer is machine-local. So without a guard, a
-layer that cannot write `computer_setup_repo_url` in its `vars.yml` could declare a
+layer that cannot write `tenon_repo_url` in its `vars.yml` could declare a
 question whose only option sets it, and redirect the unattended morning
 `ansible-pull` at its own playbook.
 
@@ -319,7 +319,7 @@ ascending and lets the last write win.
 
 `bootstrap.sh --answers <file>` skips every prompt and takes the whole
 preference set from a file with the same shape `write_machine` emits — so a
-previous machine's `~/.config/computer-setup/machine.yml` works directly, and
+previous machine's `~/.config/tenon/machine.yml` works directly, and
 "rebuild this machine" is one command — the file names its own layers, so
 nothing has to guess
 which layers a machine wants.
@@ -359,7 +359,7 @@ of ~800 collections. This playbook uses exactly two — `ansible.builtin` and
 `community.general` — and the second is already installed separately and pinned
 by `requirements.yml`. ansible-core is ~34M.
 
-It lives in `~/.local/share/computer-setup/runtime/` and **nothing puts it on
+It lives in `~/.local/share/tenon/runtime/` and **nothing puts it on
 `PATH`**. This is the engine's private interpreter, not an `ansible` for the
 user; develop against the repo with a project venv, as with any Python project.
 
@@ -381,7 +381,7 @@ it. Its known risks land where this playbook is not — the open macOS bug is
 about HTTP lookups (none here; only `env`, `first_found`, `file`), and most
 recent fixes are in `become`/sudo (no `become:` anywhere).
 
-**`CS_NO_MITOGEN=1` disables it**, and that switch matters more than it looks:
+**`TENON_NO_MITOGEN=1` disables it**, and that switch matters more than it looks:
 the runner is also how a machine *pulls a fix*, so a Mitogen that broke
 `ansible-playbook` would leave the machine unable to heal itself. The runner
 additionally refuses to enable it unless the strategy plugin is present.
@@ -391,8 +391,8 @@ execution model than production is testing something else.
 ## Runtime flow
 
 1. `bootstrap.sh` installs prerequisites and authenticates GitHub over SSH.
-2. The user defines the layers in `~/.config/computer-setup/machine.yml`.
-3. Layers are cloned to `~/.local/share/computer-setup/layers/<name>/`.
+2. The user defines the layers in `~/.config/tenon/machine.yml`.
+3. Layers are cloned to `~/.local/share/tenon/layers/<name>/`.
 4. `capabilities.yml` files are merged into the bootstrap menu; selections are
    written to the same `machine.yml`.
 5. `ansible-pull` applies the orchestrator with that file and the cache path.
@@ -404,7 +404,7 @@ execution model than production is testing something else.
 - **No trusted directory under `curl | bash`.** There is no script file, so
   `$PWD` would be taken for a checkout and an unrelated project's
   `requirements.yml` used silently. `resolve_script_dir` trusts a directory only
-  if it holds `local.yml` and `scripts/computer-setup-layers`; otherwise every
+  if it holds `local.yml` and `scripts/tenon-layers`; otherwise every
   consumer downloads what it needs. `bash <(curl ...)` resolves to `/dev/fd`
   and takes the same path.
 - **Merged registries use ASCII Unit Separator, not tab.** Tab is IFS
@@ -428,13 +428,13 @@ Probes that need a mutating step first (`brew outdated`) are the exception; see
 ## Run state
 
 Everything this system does is otherwise invisible unless you read Ansible's
-console output. `callback_plugins/computer_setup_state.py` writes a
-machine-readable summary of each run to `~/.local/state/computer-setup/last-run.json`
-(mode `0600`), which `computer-setup status` renders and a UI could consume
+console output. `callback_plugins/tenon_state.py` writes a
+machine-readable summary of each run to `~/.local/state/tenon/last-run.json`
+(mode `0600`), which `tenon status` renders and a UI could consume
 directly.
 
 It is an **aggregate** callback, so it runs alongside the normal stdout callback
-and the human-readable log is unchanged. It is inert unless `CS_STATE_FILE` is
+and the human-readable log is unchanged. It is inert unless `TENON_STATE_FILE` is
 exported, which the runner does for `apply`, `check` and both scheduled modes.
 
 A callback rather than parsing `ansible-pull` output: it emits two plays with
@@ -472,7 +472,7 @@ change for different reasons: a field added to the inventory should not force
 every reader of the run summary to re-check its version.
 
 **None of them is a contract yet.** They exist so they can become contracts
-without a migration, but everything that reads them — `computer-setup status`,
+without a migration, but everything that reads them — `tenon status`,
 `manifest`, `history` — ships in this repo, in the same commit as any change to
 the plugin. Reshape them freely while that is true.
 
@@ -506,7 +506,7 @@ probe retries three times and logs the git error rather than discarding it.
 ## The manifest: what this system owns
 
 The same callback writes `managed-paths.json` — every filesystem path the run
-managed, whether or not it changed. `computer-setup manifest` renders it.
+managed, whether or not it changed. `tenon manifest` renders it.
 
 ```json
 { "schema_version": 1, "generated": "…", "mode": "check",
@@ -524,7 +524,7 @@ than more fields on one.
 
 Why derived from the callback rather than declared per role: a declared path and
 a written path are the same fact in two places, and this repo has twice paid for
-that — `mode` declared on capability configs, and `computer_setup_state_dir`
+that — `mode` declared on capability configs, and `tenon_state_dir`
 declared `0700` by one role and `0755` by another, drifting daily for a week. A
 list maintained by hand drifts silently, and here the silent side holds the
 delete button.
@@ -593,7 +593,7 @@ precondition.
 ## Orphans: paths that stopped being managed
 
 Each complete run diffs the previous manifest against its own and records what
-fell out, in `orphans`. `computer-setup manifest` lists them and `status` says
+fell out, in `orphans`. `tenon manifest` lists them and `status` says
 how many there are.
 
 **Reported, never removed.** Deciding a file is garbage is a judgement, and the
@@ -641,12 +641,12 @@ costs one record.
 
 One line per **invocation**, not per play. `ansible-pull` can reach the
 callback's final hook more than once, and since this file is appended rather
-than overwritten, each line is keyed on `CS_RUN_ID` and a repeat of the same id
+than overwritten, each line is keyed on `TENON_RUN_ID` and a repeat of the same id
 replaces the previous line instead of adding one.
 
 ## Run logs
 
-One file per run, in `~/Library/Logs/computer-setup/`, named
+One file per run, in `~/Library/Logs/tenon/`, named
 `<YYYYmmdd-HHMMSS>-<mode>.log`.
 
 Every run is kept, scheduled or interactive, so "open the log for that run" always
@@ -666,7 +666,7 @@ away the evidence.
 ## Live progress
 
 `progress.jsonl` — a header, one flushed line per task, and an end marker.
-Rewritten from scratch by every run. `computer-setup progress` renders it, and
+Rewritten from scratch by every run. `tenon progress` renders it, and
 so does the menu bar.
 
 Flushed per line, or a reader sees nothing until the run ends — the one moment
@@ -709,8 +709,8 @@ plus a library of primitives the real roles call via `tasks_from`.
 | `tasks/merge_layer_vars.yml` | Merge one layer's `vars.yml` into play scope: enforces `schema_version`, rejects reserved keys, appends lists, overrides scalars. |
 | `tasks/merge_layer_capabilities.yml` | Merge one layer's `capabilities.yml` into the capability registry. |
 | `tasks/merge_layer_questions.yml` | Merge one layer's `questions.yml` into the question registry, rejecting any `set:` payload that names a reserved key. |
-| `tasks/deploy_layer_file.yml` | Resolve **and** deploy one layer file/template: creates the parent dir, copies or templates, no-ops when no layer provides the key. Leaves the destination's mode alone unless `computer_setup_deploy_executable` is set. The primitive behind every "a layer supplies this file" case — capability `config:` bundles, the prompt, editor settings, `~/.zshrc`. |
-| `scripts/computer-setup-layers` | Sync layer repos into the cache. Validates layer names and `schema_version`, and force-syncs to `origin` (fetch + hard reset), so a diverged or hand-edited cache can never silently persist. Repo URLs are used as written — an explicit `https://` is not rewritten to SSH, since that is a deliberate choice where port 22 is blocked. |
+| `tasks/deploy_layer_file.yml` | Resolve **and** deploy one layer file/template: creates the parent dir, copies or templates, no-ops when no layer provides the key. Leaves the destination's mode alone unless `tenon_deploy_executable` is set. The primitive behind every "a layer supplies this file" case — capability `config:` bundles, the prompt, editor settings, `~/.zshrc`. |
+| `scripts/tenon-layers` | Sync layer repos into the cache. Validates layer names and `schema_version`, and force-syncs to `origin` (fetch + hard reset), so a diverged or hand-edited cache can never silently persist. Repo URLs are used as written — an explicit `https://` is not rewritten to SSH, since that is a deliberate choice where port 22 is blocked. |
 
 ### File vs template resolution
 
@@ -760,7 +760,7 @@ one LaunchAgent implementation, not a private second copy inside
 so a layer cannot retask, reschedule, or delete them by redeclaring the list,
 and they answer to their own kill switch (`drift_correction_enabled`) rather
 than the layer-facing `scheduled_agents_enabled`. `drift_correction` itself now
-only deploys the `computer-setup` command those jobs invoke.
+only deploys the `tenon` command those jobs invoke.
 
 ## The engine names no tool
 
@@ -796,14 +796,14 @@ becomes *variables* is checked against a reserved list; data that would become
 ## Reserved keys
 
 A layer's `vars.yml` may not define certain keys. The authoritative lists are
-`computer_setup_reserved_layer_keys` and `computer_setup_reserved_layer_prefixes`
+`tenon_reserved_layer_keys` and `tenon_reserved_layer_prefixes`
 in [`roles/core/tasks/main.yml`](../roles/core/tasks/main.yml).
 They are deliberately not re-listed here, because an enumeration in prose is a
 copy that goes stale.
 
 The split between them is an invariant, not a judgement call:
 
-> **Reserved by prefix** — everything the engine owns: `computer_setup_`,
+> **Reserved by prefix** — everything the engine owns: `tenon_`,
 > `drift_correction_`, `ansible_`, and `_cs_` (the engine's short-lived internal
 > facts, e.g. `_cs_deploy_src`).
 >
@@ -814,7 +814,7 @@ The split between them is an invariant, not a judgement call:
 > `repositories_base_dir`).
 
 The consequence is what matters: **adding an engine variable never requires
-editing the reserved list.** A new `computer_setup_*` or `drift_correction_*`
+editing the reserved list.** A new `tenon_*` or `drift_correction_*`
 var is protected the moment it exists. Only the public-interface names are
 enumerated, and that list should essentially never grow.
 
@@ -880,7 +880,7 @@ existing — a machine signed in to Copilot alone still has opencode's `auth.jso
 **This is what a reminder should have been.** `reminders:` prints on every run
 whether or not the thing is done, so it is noise the day after you read it. A
 login is *checked*: it reports as ordinary drift while the credential is missing
-— by name, in `computer-setup status` — and goes quiet once it is not.
+— by name, in `tenon status` — and goes quiet once it is not.
 
 Two halves, split deliberately:
 
@@ -890,7 +890,7 @@ Two halves, split deliberately:
   before it could be used, so the first check on a machine would report
   everything missing, and deploying it during `--check` would mean a check that
   mutates.
-- **The remedy runs only when `computer_setup_interactive`** is true. Both
+- **The remedy runs only when `tenon_interactive`** is true. Both
   scheduled modes pass `false`, so a LaunchAgent with no TTY reports instead of
   hanging on a browser flow — the same split as casks in the upgrade role.
 
@@ -908,19 +908,19 @@ Split by the XDG question — who owns it, and what does losing it cost:
 
 | Path | Holds | Losing it |
 |---|---|---|
-| `~/.config/computer-setup/machine.yml` | the machine declaration | you re-answer every question |
-| `~/.config/computer-setup/backup.yml` | which repo backs this machine up, under what name | you re-run `machine init` |
-| `~/.local/share/computer-setup/runtime/` | the pinned python + ansible-core + mitogen | reinstalled from `runtime.yml`, but nothing runs until it is |
-| `~/.local/share/computer-setup/layers/` | the layer cache | re-cloned on the next run |
-| `~/.local/share/computer-setup/backups/` | clone of the backup repo | **possibly a commit** — see below |
-| `~/.local/state/computer-setup/last-run.json` | what the last run did | nothing; the next run rewrites it |
-| `~/.local/state/computer-setup/managed-paths.json` | every path this system owns | nothing — but collection loses its memory, so orphans survive. Fails safe |
-| `~/.local/state/computer-setup/history.jsonl` | one line per run, ~500 runs | the run history, which no run can reconstruct |
-| `~/.local/state/computer-setup/last-success` | when a scheduled run last succeeded | staleness reads as "never synced" until the next one |
-| `~/.local/state/computer-setup/last-success-upgrade` | when the scheduled upgrade last succeeded | `status` shows no upgrade line until the next one |
-| `~/.local/state/computer-setup/galaxy-core-version` | which ansible-core the collections were resolved against | a redundant re-resolve |
-| `~/.local/state/computer-setup/progress.jsonl` | what the current run is doing | nothing; transient by design |
-| `~/Library/Logs/computer-setup/` (macOS), `~/.local/state/computer-setup/logs/` (Linux) | one log per run | failed runs' output, which nothing else keeps |
+| `~/.config/tenon/machine.yml` | the machine declaration | you re-answer every question |
+| `~/.config/tenon/backup.yml` | which repo backs this machine up, under what name | you re-run `machine init` |
+| `~/.local/share/tenon/runtime/` | the pinned python + ansible-core + mitogen | reinstalled from `runtime.yml`, but nothing runs until it is |
+| `~/.local/share/tenon/layers/` | the layer cache | re-cloned on the next run |
+| `~/.local/share/tenon/backups/` | clone of the backup repo | **possibly a commit** — see below |
+| `~/.local/state/tenon/last-run.json` | what the last run did | nothing; the next run rewrites it |
+| `~/.local/state/tenon/managed-paths.json` | every path this system owns | nothing — but collection loses its memory, so orphans survive. Fails safe |
+| `~/.local/state/tenon/history.jsonl` | one line per run, ~500 runs | the run history, which no run can reconstruct |
+| `~/.local/state/tenon/last-success` | when a scheduled run last succeeded | staleness reads as "never synced" until the next one |
+| `~/.local/state/tenon/last-success-upgrade` | when the scheduled upgrade last succeeded | `status` shows no upgrade line until the next one |
+| `~/.local/state/tenon/galaxy-core-version` | which ansible-core the collections were resolved against | a redundant re-resolve |
+| `~/.local/state/tenon/progress.jsonl` | what the current run is doing | nothing; transient by design |
+| `~/Library/Logs/tenon/` (macOS), `~/.local/state/tenon/logs/` (Linux) | one log per run | failed runs' output, which nothing else keeps |
 
 Both `~/.config` entries are configuration because a HUMAN decided them and no
 run can reconstruct them. `backup.yml` is config despite describing where state
@@ -954,10 +954,10 @@ Anything loose is there because the tool gives no choice:
 | `~/.gitconfig` | git prefers it over the XDG path, and it is user-authored: the engine only **appends an include** |
 | `~/.zsh/*.zsh` | snippets, auto-sourced by glob, garbage-collected via the manifest |
 | `~/.zsh/configs/*` | whole-file configs, sourced by name, **not** garbage-collected |
-| `~/.config/<tool>/` | anything that honours XDG: `git`, `zed`, `opencode`, `computer-setup` |
+| `~/.config/<tool>/` | anything that honours XDG: `git`, `zed`, `opencode`, `tenon` |
 | `~/.config/git/ignore` | git's own XDG path for the global ignore list — `core.excludesFile` is still set explicitly, because git only falls back to this path when that key is **unset** |
 | `~/.local/bin/` | the runner and its helpers |
-| `~/.ansible/pull/computer-setup/` | `ansible-pull`'s checkout of this repo — ansible's own directory, but the name is **pinned** (see below) |
+| `~/.ansible/pull/tenon/` | `ansible-pull`'s checkout of this repo — ansible's own directory, but the name is **pinned** (see below) |
 | `~/.dbt/`, `~/.docker/` | the tool insists |
 
 The distinction inside `~/.zsh` is the one that catches people. A snippet is
@@ -981,7 +981,7 @@ Two rules follow, and both have already been learned the hard way:
   joining a network that appends an mDNS `.home` suffix starts a second checkout
   which then sits stale until that network comes back. The hostname is in the
   default so hosts sharing an NFS home don't collide; a per-user macOS home has
-  no such sharing. Both callers pass `-d` (`computer_setup_pull_dir` in
+  no such sharing. Both callers pass `-d` (`tenon_pull_dir` in
   `local.yml`, `PULL_DIR` in `bootstrap.sh`) and `check.sh` asserts they agree.
   Editing the checkout is separately fatal: `ansible-pull` clones with
   `force=no`, so a dirty checkout makes it **refuse to update**, and the

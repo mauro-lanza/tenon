@@ -15,23 +15,23 @@ from ansible.plugins.callback import CallbackBase
 __metaclass__ = type
 
 DOCUMENTATION = """
-    name: computer_setup_state
+    name: tenon_state
     type: aggregate
-    short_description: Write a machine-readable run summary to CS_STATE_FILE
+    short_description: Write a machine-readable run summary to TENON_STATE_FILE
     description:
       - Records which tasks changed (or would change under --check), by name,
         role and destination path. Metadata only, never file contents.
-      - Silently does nothing when CS_STATE_FILE is unset, so ordinary
+      - Silently does nothing when TENON_STATE_FILE is unset, so ordinary
         interactive runs are unaffected.
-      - Records every managed filesystem path to CS_MANIFEST_FILE, so "what
+      - Records every managed filesystem path to TENON_MANIFEST_FILE, so "what
         does this system own" is a question with an answer.
-      - Appends one line per run to CS_HISTORY_FILE, so a machine has a history
+      - Appends one line per run to TENON_HISTORY_FILE, so a machine has a history
         longer than its last run.
     requirements:
-      - Set the CS_STATE_FILE environment variable to enable.
+      - Set the TENON_STATE_FILE environment variable to enable.
 """
 
-# The shape below is a CONSUMED INTERFACE (`computer-setup status`, and any UI
+# The shape below is a CONSUMED INTERFACE (`tenon status`, and any UI
 # later). Bump on a breaking change and update the contract test in
 # scripts/check.sh, the same way layers carry a schema_version.
 STATE_SCHEMA_VERSION = 1
@@ -78,34 +78,34 @@ WRITE_ACTIONS = frozenset((
 class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = "aggregate"
-    CALLBACK_NAME = "computer_setup_state"
+    CALLBACK_NAME = "tenon_state"
     # Aggregate callbacks run alongside the stdout callback rather than
     # replacing it, so the human-readable log keeps its normal format.
     CALLBACK_NEEDS_ENABLED = True
 
     def __init__(self, *args, **kwargs):
         super(CallbackModule, self).__init__(*args, **kwargs)
-        self.state_file = os.environ.get("CS_STATE_FILE") or ""
-        self.run_mode = os.environ.get("CS_RUN_MODE") or "apply"
+        self.state_file = os.environ.get("TENON_STATE_FILE") or ""
+        self.run_mode = os.environ.get("TENON_RUN_MODE") or "apply"
         # A run narrowed by --tags/--limit describes only what it looked at.
         # Recorded so a reader cannot mistake "nothing changed in the one role I
         # ran" for "this machine matches its configuration".
-        self.partial = os.environ.get("CS_RUN_PARTIAL") == "1"
+        self.partial = os.environ.get("TENON_RUN_PARTIAL") == "1"
         self.changed = []
         self.failed = []
         self.truncated = False
         # Both are independent opt-ins, like state_file: a caller that wants a
         # run summary but no inventory simply does not set them.
-        self.manifest_file = os.environ.get("CS_MANIFEST_FILE") or ""
-        self.history_file = os.environ.get("CS_HISTORY_FILE") or ""
+        self.manifest_file = os.environ.get("TENON_MANIFEST_FILE") or ""
+        self.history_file = os.environ.get("TENON_HISTORY_FILE") or ""
         # Live progress, for a UI to tail while the run is happening. Truncated
         # at the first task rather than appended to: the previous run's progress
         # is of no interest, and a reader must never see two runs interleaved.
-        self.progress_file = os.environ.get("CS_PROGRESS_FILE") or ""
+        self.progress_file = os.environ.get("TENON_PROGRESS_FILE") or ""
         # This run's own log. Recorded into the history line so every entry can
         # be traced to the output it produced — which is what lets a "recent
         # runs" list be clickable rather than decorative.
-        self.log_file = os.environ.get("CS_LOG_FILE") or ""
+        self.log_file = os.environ.get("TENON_LOG_FILE") or ""
         self.progress_handle = None
         self.task_number = 0
         # Identifies THIS invocation across every play it runs. ansible-pull can
@@ -113,7 +113,7 @@ class CallbackModule(CallbackBase):
         # real one), and history is appended rather than overwritten — so
         # without this a single run could leave two lines. Keyed rather than
         # counted, because the two plays may be separate processes.
-        self.run_id = os.environ.get("CS_RUN_ID") or ""
+        self.run_id = os.environ.get("TENON_RUN_ID") or ""
         # path -> entry. A dict, so a path deployed by two tasks (a parent
         # directory created by several roles) is recorded once.
         self.managed_files = {}

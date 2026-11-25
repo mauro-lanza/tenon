@@ -1,5 +1,5 @@
 ---
-# Drives the manifest and history outputs of the computer_setup_state callback.
+# Drives the manifest and history outputs of the tenon_state callback.
 #
 # Separate from tests/state.yml on purpose: that file asserts the RUN-STATE
 # contract (what changed), and its assertions count changed tasks exactly. This

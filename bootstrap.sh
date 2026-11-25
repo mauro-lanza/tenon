@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
-# computer-setup bootstrap (orchestrator)
+# tenon bootstrap (orchestrator)
 #
 # Run on a fresh Mac (Apple Silicon) or an Arch-based Linux machine to install
 # prerequisites, define/clone content layers, and kick off the Ansible playbook.
 #
 #   Phase 0  Prerequisites + GitHub auth (no repo access required)
 #   Phase 1  Layer selection & fetch (define manifest, clone to layer cache)
-#   Phase 2  Build the machine declaration (merge capabilities → prompts → ~/.config/computer-setup/machine.yml)
+#   Phase 2  Build the machine declaration (merge capabilities → prompts → ~/.config/tenon/machine.yml)
 #   Phase 3  Run Ansible (ansible-pull the orchestrator with merged input)
 #
 # Usage: curl -fsSL <raw-url>/bootstrap.sh | bash
@@ -19,27 +19,27 @@ set -euo pipefail
 # ─── Locations ────────────────────────────────────────────────────────────────
 # Every piece of machine-local state lives under one directory, so "back up this
 # machine's answers" is a single `cp -r` and nothing is stranded in $HOME.
-CONFIG_DIR="$HOME/.config/computer-setup"
+CONFIG_DIR="$HOME/.config/tenon"
 # THE machine declaration: layers + answers + capability selections. One file
 # because it is one decision — capability ids are meaningless without the layer
 # registry that defines them, so a backup of half of it restores nothing.
 MACHINE_FILE="$CONFIG_DIR/machine.yml"
-LAYER_CACHE="$HOME/.local/share/computer-setup/layers"
+LAYER_CACHE="$HOME/.local/share/tenon/layers"
 # Pinned (ansible-pull's hostname default forks a checkout per network). Must
-# match `computer_setup_pull_dir` in local.yml.
-PULL_DIR="$HOME/.ansible/pull/computer-setup"
-# Must match `computer_setup_runtime_dir` in local.yml; versions come from runtime.yml.
-RUNTIME_DIR="$HOME/.local/share/computer-setup/runtime"
+# match `tenon_pull_dir` in local.yml.
+PULL_DIR="$HOME/.ansible/pull/tenon"
+# Must match `tenon_runtime_dir` in local.yml; versions come from runtime.yml.
+RUNTIME_DIR="$HOME/.local/share/tenon/runtime"
 RUNTIME_BIN="$RUNTIME_DIR/bin"
 
 # Darwin or Linux; Phase 0 is the only part that differs.
-CS_OS="$(uname -s)"
+TENON_OS="$(uname -s)"
 
 # Apple silicon prefix (Linuxbrew's elsewhere, matching local.yml). Asserted in
 # main() and in the playbook, so this is a constant rather than a `brew --prefix`
 # call that must run before Homebrew is installed. Layers reference it as
 # `{{ homebrew_prefix }}`.
-if [[ "$CS_OS" == Darwin ]]; then
+if [[ "$TENON_OS" == Darwin ]]; then
     HOMEBREW_PREFIX="/opt/homebrew"
 else
     HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
@@ -49,7 +49,7 @@ fi
 # running ansible-pull, so GitHub repos are accessed over SSH consistently.
 # Overridable so a team can run its own fork: BOOTSTRAP_OWNER=acme bash bootstrap.sh
 ORCH_OWNER="${BOOTSTRAP_OWNER:-mauro-lanza}"
-ORCH_NAME="computer-setup"
+ORCH_NAME="tenon"
 REPO_URL="git@github.com:${ORCH_OWNER}/${ORCH_NAME}.git"
 REPO_BRANCH="${BOOTSTRAP_BRANCH:-main}"
 # Raw file base, for the two things fetched before any checkout exists
@@ -58,7 +58,7 @@ REPO_BRANCH="${BOOTSTRAP_BRANCH:-main}"
 RAW_BASE="https://raw.githubusercontent.com/${ORCH_OWNER}/${ORCH_NAME}/${REPO_BRANCH}"
 
 # Highest layer schema_version understood. Duplicates local.yml and
-# scripts/computer-setup-layers (no checkout exists under `curl | bash`);
+# scripts/tenon-layers (no checkout exists under `curl | bash`);
 # check.sh asserts all three agree.
 SCHEMA_VERSION_MAX=2
 
@@ -120,7 +120,7 @@ resolve_script_dir() {
     fi
     # Two markers, both of which a lookalike directory would have to fake.
     if [[ -n "$candidate" && -f "$candidate/local.yml" \
-          && -f "$candidate/scripts/computer-setup-layers" ]]; then
+          && -f "$candidate/scripts/tenon-layers" ]]; then
         printf '%s\n' "$candidate"
     fi
 }
@@ -192,7 +192,7 @@ install_homebrew() {
 
 # yq/git/gh are needed before we can read capabilities or clone layers.
 ensure_prereqs() {
-    if [[ "$CS_OS" == Linux ]]; then
+    if [[ "$TENON_OS" == Linux ]]; then
         ensure_prereqs_pacman
         return
     fi
@@ -430,16 +430,16 @@ manage_layers() {
 }
 
 # ── Machine backup / restore ─────────────────────────────────────────────────
-# Same paths the deployed runner uses, so `bootstrap.sh` and `computer-setup
+# Same paths the deployed runner uses, so `bootstrap.sh` and `tenon
 # machine` are two callers of one repo rather than two conventions.
 BACKUP_CONFIG="$CONFIG_DIR/backup.yml"
-BACKUP_REPO_DIR="$HOME/.local/share/computer-setup/backups"
+BACKUP_REPO_DIR="$HOME/.local/share/tenon/backups"
 
 # Fails when the helper cannot be obtained, and every caller treats that as
 # "skip", never as "fail": a backup repo being unreachable must not stop a
 # machine being set up.
 machine_helper() {
-    run_repo_script scripts/computer-setup-machine "$@" \
+    run_repo_script scripts/tenon-machine "$@" \
         --config "$BACKUP_CONFIG" \
         --repo-dir "$BACKUP_REPO_DIR" \
         --machine-file "$MACHINE_FILE"
@@ -504,13 +504,13 @@ offer_backup() {
         ask_yn "Back up this machine's declaration to a private repo?" "n" || return 0
         machine_helper init || { warn "Backup setup failed — skipping."; return 0; }
     fi
-    machine_helper push || warn "Could not back up the declaration — run \`computer-setup machine push\` later."
+    machine_helper push || warn "Could not back up the declaration — run \`tenon machine push\` later."
 }
 
 # Clone/update each layer into the stable layer cache.
 clone_layers() {
     [[ ! -f "$MACHINE_FILE" ]] && return
-    run_repo_script scripts/computer-setup-layers sync \
+    run_repo_script scripts/tenon-layers sync \
         --manifest "$MACHINE_FILE" \
         --cache "$LAYER_CACHE" \
         --schema-version "$SCHEMA_VERSION_MAX"
@@ -587,7 +587,7 @@ order_capabilities_by_requires() {
 
 # Merged capabilities. Columns:
 #   id  desc  requires  adopt_if_present
-# `id` is the capability token written to ~/.config/computer-setup/machine.yml as a selection.
+# `id` is the capability token written to ~/.config/tenon/machine.yml as a selection.
 # Packages are not read for apply (the engine derives them from the registry), only to hide
 # what this platform's managers (from its profile) cannot install; see "Platforms and package
 # managers" in docs/architecture.md. Hidden ids land in UNOFFERABLE_CAPS.
@@ -603,9 +603,9 @@ load_capabilities() {
     # Offerability is decided per merged row, after the highest-priority
     # definition won, so a lower layer's variant cannot resurface.
     local profile managers offerable
-    profile="$(fetch_repo_file "roles/core/vars/platform/${CS_OS}.yml")" || exit 1
-    managers="$(yq -r '.computer_setup_platform.package_managers | keys | .[]' "$profile")" || {
-        error "Cannot read package managers from the platform profile roles/core/vars/platform/${CS_OS}.yml"
+    profile="$(fetch_repo_file "roles/core/vars/platform/${TENON_OS}.yml")" || exit 1
+    managers="$(yq -r '.tenon_platform.package_managers | keys | .[]' "$profile")" || {
+        error "Cannot read package managers from the platform profile roles/core/vars/platform/${TENON_OS}.yml"
         exit 1
     }
     [[ -n "$SCRIPT_DIR" && "$profile" == "$SCRIPT_DIR/"* ]] || rm -f "$profile"
@@ -649,8 +649,8 @@ load_questions() {
 
     # An option is hidden when it implies a capability this platform cannot offer.
     # shellcheck disable=SC2016 # a yq program: $hidden/$i are yq variables
-    CS_UNOFFERABLE="${UNOFFERABLE_CAPS:- }" merge_layer_file questions.yml \
-        '(env(CS_UNOFFERABLE) | split(" ")) as $hidden
+    TENON_UNOFFERABLE="${UNOFFERABLE_CAPS:- }" merge_layer_file questions.yml \
+        '(env(TENON_UNOFFERABLE) | split(" ")) as $hidden
          | .questions[]?
          | ([.options[]? | select(([.implies[]? | select(. as $i | $hidden | any_c(. == $i))] | length) == 0) | .value]) as $shown
          | (.default // "") as $d
@@ -803,7 +803,7 @@ usage() {
 Usage: bootstrap.sh [--answers <file>] [--help]
 
   --answers <file>  Take every preference from <file> and skip all prompts.
-                    Same shape as ~/.config/computer-setup/machine.yml, so a previous machine's
+                    Same shape as ~/.config/tenon/machine.yml, so a previous machine's
                     machine.yml can be used directly.
 USAGE
 }
@@ -870,7 +870,7 @@ load_prior_machine() {
 # would break on quoting.
 prior_answer() {
     $HAS_PRIOR_MACHINE || return 0
-    CS_ANSWER_KEY="$1" yq -r '.answers[strenv(CS_ANSWER_KEY)] // ""' \
+    TENON_ANSWER_KEY="$1" yq -r '.answers[strenv(TENON_ANSWER_KEY)] // ""' \
         "$MACHINE_FILE" 2>/dev/null || true
 }
 
@@ -1189,10 +1189,10 @@ run_playbook() {
         -C "$REPO_BRANCH"
         -d "$PULL_DIR"
         -e "@${MACHINE_FILE}"
-        -e "computer_setup_layer_cache=${LAYER_CACHE}"
-        -e "computer_setup_machine_file=${MACHINE_FILE}"
-        -e "computer_setup_repo_url=${REPO_URL}"
-        -e "computer_setup_repo_branch=${REPO_BRANCH}"
+        -e "tenon_layer_cache=${LAYER_CACHE}"
+        -e "tenon_machine_file=${MACHINE_FILE}"
+        -e "tenon_repo_url=${REPO_URL}"
+        -e "tenon_repo_branch=${REPO_BRANCH}"
     )
 
     if [[ -n "$ANSWERS_FILE" ]]; then
@@ -1212,7 +1212,7 @@ run_playbook() {
     info "Applying changes..."
     "$RUNTIME_BIN/ansible-pull" "${pull_args[@]}" local.yml
 
-    unset CS_SUDO_PASSWORD
+    unset TENON_SUDO_PASSWORD
     ok "Playbook completed successfully"
 }
 
@@ -1222,7 +1222,7 @@ run_playbook() {
 # (process list). Optional: Enter skips and those casks are reported at the end.
 collect_sudo_password() {
     [[ -n "$ANSWERS_FILE" ]] && return 0   # non-interactive: no prompt
-    if [[ "$CS_OS" == Linux ]]; then
+    if [[ "$TENON_OS" == Linux ]]; then
         collect_sudo_password_linux
         return 0
     fi
@@ -1234,7 +1234,7 @@ collect_sudo_password() {
     read -rs pw
     echo
     if [[ -n "$pw" ]]; then
-        export CS_SUDO_PASSWORD="$pw"
+        export TENON_SUDO_PASSWORD="$pw"
         ok "Password captured for this run only"
     else
         info "Skipping — casks needing root will be reported at the end."
@@ -1259,7 +1259,7 @@ collect_sudo_password_linux() {
             return 0
         fi
         if printf '%s\n' "$pw" | sudo -S -k -p '' true 2>/dev/null; then
-            export CS_SUDO_PASSWORD="$pw"
+            export TENON_SUDO_PASSWORD="$pw"
             unset pw
             ok "Password captured for this run only"
             return 0
@@ -1295,11 +1295,11 @@ main() {
     echo "╚══════════════════════════════════════════════╝"
     echo
 
-    if [[ "$CS_OS" == Darwin && "$(uname -m)" == arm64 ]]; then
+    if [[ "$TENON_OS" == Darwin && "$(uname -m)" == arm64 ]]; then
         install_xcode_clt
         install_homebrew
-    elif [[ "$CS_OS" != Linux ]]; then
-        error "Unsupported platform: ${CS_OS} $(uname -m) — Apple Silicon macOS or Arch-based Linux required."
+    elif [[ "$TENON_OS" != Linux ]]; then
+        error "Unsupported platform: ${TENON_OS} $(uname -m) — Apple Silicon macOS or Arch-based Linux required."
         exit 1
     fi
 
@@ -1343,9 +1343,9 @@ main() {
 }
 
 # Run the installer only when executed directly. Setting
-# COMPUTER_SETUP_BOOTSTRAP_LIB=1 lets tests/bootstrap-prompts.sh source this file
+# TENON_BOOTSTRAP_LIB=1 lets tests/bootstrap-prompts.sh source this file
 # for its functions — the prompt loop is the one part of bootstrap that `bash -n`
 # cannot check, and it is where the interactive bugs live.
-if [[ "${COMPUTER_SETUP_BOOTSTRAP_LIB:-0}" != "1" ]]; then
+if [[ "${TENON_BOOTSTRAP_LIB:-0}" != "1" ]]; then
     main "$@"
 fi

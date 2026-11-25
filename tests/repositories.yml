@@ -24,7 +24,7 @@
     - name: Apply the role twice, dirtying the clone in between
       vars:
         repositories_base_dir: "{{ s.path }}/base"
-        computer_setup_config_dir: "{{ s.path }}/cfg"
+        tenon_config_dir: "{{ s.path }}/cfg"
         repositories:
           - folder: "{{ s.path }}/base/a"
             remote: "{{ s.path }}/src"

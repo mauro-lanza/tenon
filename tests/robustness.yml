@@ -12,9 +12,9 @@
   connection: local
   gather_facts: false
   vars:
-    computer_setup_active_capabilities: [docker-cli]
+    tenon_active_capabilities: [docker-cli]
     homebrew_prefix: /opt/homebrew
-    computer_setup_platform: {name: Darwin}
+    tenon_platform: {name: Darwin}
   tasks:
     - name: Create a scratch HOME
       ansible.builtin.tempfile:
@@ -79,7 +79,7 @@
             that:
               - (includes.config_values["include.path"]) | length == 2
               - (scratch.path ~ '/mine.gitconfig') in (includes.config_values["include.path"])
-              - (scratch.path ~ '/.config/git/computer-setup.gitconfig') in (includes.config_values["include.path"])
+              - (scratch.path ~ '/.config/git/tenon.gitconfig') in (includes.config_values["include.path"])
               - (docker_cfg.content | b64decode | from_json).cliPluginsExtraDirs == ['/opt/homebrew/lib/docker/cli-plugins']
             fail_msg: "includes={{ includes.config_values }} docker={{ docker_cfg.content | b64decode }}"
   post_tasks:
@@ -113,7 +113,7 @@
           vars:
             macos_defaults:
               - {domain: "{{ scratch.path }}/t.plist", key: K, type: int, value: 1}
-            computer_setup_bin_dir: "{{ scratch.path }}/bin"
+            tenon_bin_dir: "{{ scratch.path }}/bin"
             home_dir: "{{ scratch.path }}"
             macos_conditional_defaults:
               - app: "{{ scratch.path }}"
@@ -167,7 +167,7 @@
 
         - name: Read the managed config
           ansible.builtin.slurp:
-            src: "{{ scratch.path }}/.config/git/computer-setup.gitconfig"
+            src: "{{ scratch.path }}/.config/git/tenon.gitconfig"
           register: managed_before
 
         - name: One identity

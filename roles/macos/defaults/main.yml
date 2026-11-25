@@ -7,4 +7,4 @@ macos_defaults: []
 macos_conditional_defaults: []
 
 # Read-only helper that diffs live defaults against declared values and emits paste-ready YAML.
-macos_capture_path: "{{ computer_setup_bin_dir }}/macos-capture"
+macos_capture_path: "{{ tenon_bin_dir }}/macos-capture"

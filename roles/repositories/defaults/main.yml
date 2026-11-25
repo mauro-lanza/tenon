@@ -7,8 +7,8 @@
 # Optional per-machine override. When present it fully replaces the merged
 # `repositories` list — for a machine needing repos beyond what the layers
 # provide. Machine-local state, so it sits with machine.yml and the layer
-# manifest rather than loose in $HOME. Scaffold one with `computer-setup repos`.
-computer_setup_repositories_override_file: "{{ computer_setup_config_dir }}/repositories.yml"
+# manifest rather than loose in $HOME. Scaffold one with `tenon repos`.
+tenon_repositories_override_file: "{{ tenon_config_dir }}/repositories.yml"
 
 # Safe empty default — the real list is the variable interface `repositories`,
 # supplied and list-appended across content layers. Cloning only adds what is

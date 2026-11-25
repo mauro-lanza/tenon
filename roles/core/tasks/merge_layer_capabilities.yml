@@ -8,12 +8,12 @@
 
 - name: "[{{ _layer.name }}] Stat capabilities.yml"
   ansible.builtin.stat:
-    path: "{{ computer_setup_layer_cache }}/{{ _layer.name }}/capabilities.yml"
+    path: "{{ tenon_layer_cache }}/{{ _layer.name }}/capabilities.yml"
   register: _layer_capabilities_stat
 
 - name: "[{{ _layer.name }}] Load capabilities.yml"
   ansible.builtin.include_vars:
-    file: "{{ computer_setup_layer_cache }}/{{ _layer.name }}/capabilities.yml"
+    file: "{{ tenon_layer_cache }}/{{ _layer.name }}/capabilities.yml"
     name: _incoming_capabilities
   when: _layer_capabilities_stat.stat.exists
 
@@ -36,8 +36,8 @@
 
 - name: "[{{ _layer.name }}] Merge capability entries into the registry"
   ansible.builtin.set_fact:
-    computer_setup_capability_registry: >-
-      {{ computer_setup_capability_registry
+    tenon_capability_registry: >-
+      {{ tenon_capability_registry
          | combine(dict((_caps | map(attribute='id')) | zip(_caps))) }}
   vars:
     # `default([], true)` (not `default([])`) so an explicit null is replaced too.

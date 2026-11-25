@@ -44,17 +44,17 @@
     - name: "[{{ _pkg_mgr }}] Install"
       ansible.builtin.command:
         argv: >-
-          {{ (computer_setup_sudo_argv + ['pacman', '-S', '--needed', '--noconfirm', '--'] + _pkg_missing)
+          {{ (tenon_sudo_argv + ['pacman', '-S', '--needed', '--noconfirm', '--'] + _pkg_missing)
              if _pkg_mgr == 'pacman' else
              (['paru', '-S', '--needed', '--noconfirm', '--skipreview',
-               '--sudoflags=' ~ computer_setup_sudo_argv[1], '--'] + _pkg_missing) }}
-      environment: "{{ computer_setup_sudo_env }}"
+               '--sudoflags=' ~ tenon_sudo_argv[1], '--'] + _pkg_missing) }}
+      environment: "{{ tenon_sudo_env }}"
       changed_when: true
-      when: computer_setup_sudo_ready | bool
+      when: tenon_sudo_ready | bool
 
     # Reported from local.yml post_tasks, after every other role has run.
     - name: "[{{ _pkg_mgr }}] Record packages left uninstalled for lack of sudo"
       ansible.builtin.set_fact:
         packages_unprivileged_missing: >-
           {{ (packages_unprivileged_missing | default([])) + _pkg_missing }}
-      when: not (computer_setup_sudo_ready | bool)
+      when: not (tenon_sudo_ready | bool)

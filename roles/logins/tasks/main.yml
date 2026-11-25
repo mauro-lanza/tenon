@@ -1,6 +1,6 @@
 ---
 # Report credentials a person still has to obtain; the remedy runs only when
-# `computer_setup_interactive`. See "Logins" in docs/architecture.md.
+# `tenon_interactive`. See "Logins" in docs/architecture.md.
 
 - name: Resolve which logins apply to this machine
   ansible.builtin.set_fact:
@@ -9,7 +9,7 @@
          + (_eligible
             | selectattr('requires_capability', 'defined')
             | selectattr('requires_capability', 'in',
-                         computer_setup_active_capabilities)
+                         tenon_active_capabilities)
             | list) }}
   vars:
     _eligible: "{{ logins if (logins_enabled | bool) else [] }}"
@@ -73,7 +73,7 @@
   loop: "{{ _logins_missing }}"
   loop_control:
     label: "{{ item.desc }}"
-  when: computer_setup_interactive | bool
+  when: tenon_interactive | bool
   changed_when: true
   # A cancelled browser flow must not fail the play; the next run reports it again.
   failed_when: false
@@ -82,8 +82,8 @@
   ansible.builtin.debug:
     msg: >-
       {{ _logins_missing | map(attribute='desc') | list }} still need signing
-      in. Run `computer-setup apply` from a terminal, or the command directly:
+      in. Run `tenon apply` from a terminal, or the command directly:
       {{ _logins_missing | map(attribute='remedy') | list }}
   when:
     - _logins_missing | length > 0
-    - not (computer_setup_interactive | bool)
+    - not (tenon_interactive | bool)

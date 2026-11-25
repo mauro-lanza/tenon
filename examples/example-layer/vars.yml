@@ -18,7 +18,7 @@ repositories:
 
 # ─── Packages always installed (lists append across layers, per manager) ────
 # Same managers as a capability's `packages:`. Each runs only where detected;
-# nothing is ever removed. pacman/AUR installs need root: `computer-setup apply`
+# nothing is ever removed. pacman/AUR installs need root: `tenon apply`
 # asks for the sudo password on Linux.
 # packages_baseline:
 #   brew: [ripgrep, fd, example-org/tap/tool]   # owner/tap/name adds the tap

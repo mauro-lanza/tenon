@@ -5,17 +5,17 @@
   ansible.builtin.debug:
     msg: >-
       nvm and tfenv are probed under the Homebrew prefix, which is not
-      supported on {{ computer_setup_platform.name }}; their versions are not converged.
+      supported on {{ tenon_platform.name }}; their versions are not converged.
   when:
-    - computer_setup_platform.name != 'Darwin'
-    - (runtimes_nvm_capability in computer_setup_active_capabilities)
-      or (runtimes_tfenv_capability in computer_setup_active_capabilities)
+    - tenon_platform.name != 'Darwin'
+    - (runtimes_nvm_capability in tenon_active_capabilities)
+      or (runtimes_tfenv_capability in tenon_active_capabilities)
 
 - name: Check if nvm is installed (to converge the default Node alias)
   ansible.builtin.stat:
     path: "{{ runtimes_nvm_script_path }}"
   register: runtimes_nvm_script
-  when: runtimes_nvm_capability in computer_setup_active_capabilities
+  when: runtimes_nvm_capability in tenon_active_capabilities
 
 - name: Read current NVM default alias
   ansible.builtin.slurp:
@@ -44,7 +44,7 @@
   ansible.builtin.stat:
     path: "{{ homebrew_prefix }}/bin/tfenv"
   register: runtimes_tfenv_stat
-  when: runtimes_tfenv_capability in computer_setup_active_capabilities
+  when: runtimes_tfenv_capability in tenon_active_capabilities
 
 - name: Read current tfenv Terraform version
   ansible.builtin.command:
@@ -80,7 +80,7 @@
   ansible.builtin.debug:
     msg: >-
       {{ item.tool }}: '{{ item.current }}' is active but '{{ item.declared }}'
-      is declared — `computer-setup apply` will converge it.
+      is declared — `tenon apply` will converge it.
   changed_when: true
   when:
     - ansible_check_mode

@@ -48,8 +48,8 @@
         name: core
         tasks_from: deploy_layer_file
       vars:
-        computer_setup_lookup_key: "{{ _mgr.settings_key }}"
-        computer_setup_deploy_dest: "{{ _mgr.settings_dest }}"
+        tenon_lookup_key: "{{ _mgr.settings_key }}"
+        tenon_deploy_dest: "{{ _mgr.settings_dest }}"
       when:
         - _mgr.settings_key is defined
         - _mgr.settings_dest is defined

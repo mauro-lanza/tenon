@@ -3,13 +3,13 @@
 # one place. core loads it by `ansible_facts['system']`; see "Platforms and
 # package managers" in docs/architecture.md. Keep keys in step with Linux.yml
 # (check.sh asserts they match).
-computer_setup_platform:
+tenon_platform:
   name: Darwin
   # Apple Silicon; bootstrap.sh's HOMEBREW_PREFIX must match (check.sh asserts it).
   homebrew_prefix: /opt/homebrew
   uv_bin: /opt/homebrew/bin/uv
   # Relative to home_dir: where Console looks for user logs.
-  log_dir: Library/Logs/computer-setup
+  log_dir: Library/Logs/tenon
   # Which role owns recurring jobs (scheduled_agents) and system settings (macos).
   scheduler: launchd
   system_settings: osx_defaults
@@ -32,5 +32,5 @@ computer_setup_platform:
     upgrade_warning: >-
       Quit any app being upgraded first — replacing a running app can fail and
       leave it half-installed.
-    # Asked before `computer-setup upgrade`; empty (Linux) means no prompt.
+    # Asked before `tenon upgrade`; empty (Linux) means no prompt.
     upgrade_sudo_prompt: "Some casks need root to upgrade. macOS password (Enter to skip those casks): "

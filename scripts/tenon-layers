@@ -6,8 +6,8 @@ PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 usage() {
     cat <<'EOF'
 Usage:
-  computer-setup-layers sync --manifest PATH --cache DIR [--schema-version N]
-  computer-setup-layers lint (--cache DIR | --layer DIR) [--machine FILE]
+  tenon-layers sync --manifest PATH --cache DIR [--schema-version N]
+  tenon-layers lint (--cache DIR | --layer DIR) [--machine FILE]
 
 sync  Synchronize content layers from a manifest into the layer cache. Repo URLs
       are used as written; a scheme-less github.com:owner/repo becomes SSH.
@@ -40,7 +40,7 @@ normalize_repo_url() {
     esac
 }
 
-# Duplicates local.yml's computer_setup_schema_version; check.sh asserts they agree.
+# Duplicates local.yml's tenon_schema_version; check.sh asserts they agree.
 schema_version_max=2
 validate_layer() {
     local name="$1" dest="$2" schema_version_max="$3"

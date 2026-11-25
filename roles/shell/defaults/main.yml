@@ -8,7 +8,7 @@ shell_zsh_config_dir: "{{ home_dir }}/.zsh"
 shell_priority_width: 3
 
 # Paths created by this role; cleanup removes only these, never user files in ~/.zsh.
-shell_snippet_manifest_path: "{{ shell_zsh_config_dir }}/.computer-setup-snippets"
+shell_snippet_manifest_path: "{{ shell_zsh_config_dir }}/.tenon-snippets"
 
 # Whole-file shell configs, set by layers. Item schema: { key: <layer file key>, dest: <path>, backup?: bool }
 shell_config_files: []

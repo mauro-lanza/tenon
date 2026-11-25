@@ -13,15 +13,15 @@
   ansible.builtin.debug:
     msg: >-
       The Docker CLI plugin dir is a Homebrew path, not supported on
-      {{ computer_setup_platform.name }}; ~/.docker/config.json is left alone.
+      {{ tenon_platform.name }}; ~/.docker/config.json is left alone.
   when:
-    - computer_setup_platform.name != 'Darwin'
-    - docker_cli_capability in computer_setup_active_capabilities
+    - tenon_platform.name != 'Darwin'
+    - docker_cli_capability in tenon_active_capabilities
 
 - name: Wire the Homebrew docker plugins into the Docker CLI config
   when:
-    - computer_setup_platform.name == 'Darwin'
-    - docker_cli_capability in computer_setup_active_capabilities
+    - tenon_platform.name == 'Darwin'
+    - docker_cli_capability in tenon_active_capabilities
   block:
     - name: Ensure ~/.docker exists
       ansible.builtin.file:
