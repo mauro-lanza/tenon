@@ -1,0 +1,143 @@
+---
+# The uv converge/upgrade tasks against a stub `uv` first on PATH that records
+# its argv and keeps one receipt per tool, like the real one. Proves: a second
+# run installs nothing, a file newer than the receipt reinstalls only that
+# directory, --check installs nothing, and upgrade skips directory sources.
+- name: Uv package manager
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+      register: s
+
+    - name: Source directory
+      ansible.builtin.file:
+        path: "{{ s.path }}/src/app"
+        state: directory
+        mode: "0755"
+
+    - name: Source file
+      ansible.builtin.copy:
+        dest: "{{ s.path }}/src/app/pyproject.toml"
+        content: "[project]\n"
+        mode: "0644"
+
+    - name: Stub uv
+      ansible.builtin.copy:
+        dest: "{{ s.path }}/uv"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          echo "$*" >> "{{ s.path }}/calls"
+          tools="{{ s.path }}/tools"
+          case "$1 $2" in
+            "tool dir") echo "$tools"; exit 0 ;;
+            "tool list")
+              for r in "$tools"/*/uv-receipt.toml; do
+                [[ -e "$r" ]] && echo "$(basename "$(dirname "$r")" | tr 'A-Z_' 'a-z-') v1.0"
+              done
+              exit 0 ;;
+            "tool install")
+              spec="$3"
+              if [[ "$spec" == /* ]]; then
+                name="$(basename "$spec")"
+                receipt="requirements = [{ name = \"$name\", directory = \"$spec\" }]"
+              else
+                name="${spec%%@*}"
+                receipt="requirements = [{ name = \"$name\" }]"
+              fi
+              mkdir -p "$tools/$name"
+              echo "$receipt" > "$tools/$name/uv-receipt.toml"
+              exit 0 ;;
+            "tool upgrade") echo "Nothing to upgrade"; exit 0 ;;
+          esac
+          exit 1
+
+    - name: Converge twice
+      vars:
+        _pkg_mgr: uv
+        _pkg_names: ["Ruff_X", "tool@git+https://example.com/t.git", "{{ s.path }}/src/app"]
+      environment:
+        PATH: "{{ s.path }}:{{ lookup('env', 'PATH') }}"
+      block:
+        - name: First run
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: converge/uv
+        - name: Read calls
+          ansible.builtin.slurp:
+            src: "{{ s.path }}/calls"
+          register: first
+        - name: Second run
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: converge/uv
+        - name: Read calls again
+          ansible.builtin.slurp:
+            src: "{{ s.path }}/calls"
+          register: second
+        - name: Make a source file newer than the receipt
+          ansible.builtin.file:
+            path: "{{ s.path }}/src/app/pyproject.toml"
+            state: touch
+            mode: "0644"
+            modification_time: "202701010000.00"
+        - name: Check-mode run
+          check_mode: true
+          block:
+            - name: Converge
+              ansible.builtin.include_role:
+                name: packages
+                tasks_from: converge/uv
+        - name: Read calls after check mode
+          ansible.builtin.slurp:
+            src: "{{ s.path }}/calls"
+          register: checked
+        - name: Third run
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: converge/uv
+        - name: Read calls after the change
+          ansible.builtin.slurp:
+            src: "{{ s.path }}/calls"
+          register: third
+
+    - name: Upgrade
+      vars:
+        _pkg_names: ["Ruff_X", "tool@git+https://example.com/t.git", "{{ s.path }}/src/app"]
+        _pkg_apply: true
+      environment:
+        PATH: "{{ s.path }}:{{ lookup('env', 'PATH') }}"
+      block:
+        - name: Run upgrade tasks
+          ansible.builtin.include_role:
+            name: packages
+            tasks_from: upgrade/uv
+
+    - name: Read calls after upgrade
+      ansible.builtin.slurp:
+        src: "{{ s.path }}/calls"
+      register: upgraded
+
+    - name: Assert
+      vars:
+        installs: "{{ (first.content | b64decode).splitlines() | select('match', 'tool install') | list }}"
+      ansible.builtin.assert:
+        that:
+          - installs | length == 3
+          - "'tool install Ruff_X' in installs"
+          - "'tool install tool@git+https://example.com/t.git' in installs"
+          - "('tool install ' ~ s.path ~ '/src/app') in installs"
+          - (second.content | b64decode).count('tool install') == 3
+          - (checked.content | b64decode).count('tool install') == 3
+          - (third.content | b64decode).count('tool install') == 4
+          - (third.content | b64decode).splitlines() | select('match', 'tool install') | last == 'tool install ' ~ s.path ~ '/src/app'
+          - "(upgraded.content | b64decode).splitlines() | last == 'tool upgrade Ruff_X tool'"
+
+    - name: Cleanup
+      ansible.builtin.file:
+        path: "{{ s.path }}"
+        state: absent

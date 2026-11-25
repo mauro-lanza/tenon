@@ -34,6 +34,7 @@ capabilities:
       brew: ripgrep
       pacman: ripgrep
       flatpak: org.example.Rg
+      uv: "rg-tool {{ tenon_layer_cache }}/override"
   # Installs nothing on a machine without pacman; core must name it.
   - id: pacman-only
     desc: "Only packaged for pacman"

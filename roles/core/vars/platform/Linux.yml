@@ -13,6 +13,7 @@ tenon_platform:
     pacman: /usr/bin/pacman
     aur: /usr/bin/paru
     flatpak: /usr/bin/flatpak
+    uv: /usr/bin/uv
   runner:
     mtime: stat -c %Y "$1"
     stamp_epoch: date -d "$1" '+%s'

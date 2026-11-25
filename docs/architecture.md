@@ -147,8 +147,8 @@ a template reads a plain value (`zsh_theme`) instead of testing which platform
 it is on. `check.sh` renders the runner once per profile and checks each.
 
 **Package managers are detected, not declared.** `core` stats the profile's
-candidate managers (macOS: `brew`, `cask`; Linux: `pacman`, `aur` via paru,
-`flatpak`) into `tenon_package_managers`, then resolves
+candidate managers (macOS: `brew`, `cask`, `uv`; Linux: `pacman`, `aur` via paru,
+`flatpak`, `uv`) into `tenon_package_managers`, then resolves
 `tenon_packages` (manager -> names): each layer's `packages_baseline`
 plus the selected capabilities' `packages:`, for detected managers only. The
 `packages` role loops over those, one task file per manager and action
@@ -176,6 +176,16 @@ role does not upgrade pacman or AUR packages one by one; that is the system
 updater's job (`pacman -Syu`, `paru`, Shelly). Flatpak apps go to the **user**
 installation, which needs no root; an app already present system-wide counts
 as installed and is not duplicated. Nothing is ever removed.
+
+**uv installs Python tools.** `packages: {uv: …}` takes `uv tool install`
+targets: a PyPI name, `name@git+https://…`, or an absolute directory. Capability
+strings are templated, so a layer installs its own checkout as
+`{{ tenon_layer_cache }}/<layer>`. uv rebuilds a directory source on every
+install, so the engine installs one only when no tool receipt records it or a
+file in it is newer than that receipt (which uv rewrites on each install): this
+catches edits without a version bump, and a layer re-sync only costs one reinstall.
+Named tools install once and move with `tenon upgrade` (`uv tool upgrade`);
+directory sources are left to converge.
 
 ### sudo on Linux
 

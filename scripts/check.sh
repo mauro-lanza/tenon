@@ -783,6 +783,9 @@ lu_out="$RQ_OUT"
     exit 1
 }
 echo "  ok  logins detect/remedy gating, upgrade preview queries only managed packages"
+echo "==> uv package manager"
+ANSIBLE_ROLES_PATH="$PWD/roles" run_quiet "" ansible-playbook tests/uv.yml
+echo "  ok  install once, reinstall a changed directory, no install under --check, upgrade skips directories"
 }
 
 section_runner() {

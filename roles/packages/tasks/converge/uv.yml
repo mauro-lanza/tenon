@@ -1,0 +1,64 @@
+---
+# Specs are a PyPI name, `name@<url>` (e.g. `app@git+https://host/repo.git`), or
+# an absolute directory. A named tool installs once; upgrade/uv.yml moves it on.
+# `uv tool install <dir>` always rebuilds, so a directory is installed when no
+# receipt records it or any file in it is newer than that receipt; see "Platforms
+# and package managers" in docs/architecture.md.
+- name: "[uv] Locate the tool directory"
+  ansible.builtin.command:
+    argv: [uv, tool, dir]
+  register: _uv_tool_dir
+  changed_when: false
+  # Read-only; see "Probes under --check" in docs/architecture.md.
+  check_mode: false
+
+- name: "[uv] List installed tools"
+  ansible.builtin.command:
+    argv: [uv, tool, list]
+  register: _uv_installed
+  changed_when: false
+  check_mode: false
+
+- name: "[uv] Resolve the missing set"
+  ansible.builtin.set_fact:
+    _uv_dirs: "{{ _pkg_names | select('match', '^/') | list }}"
+    _uv_stale_dirs: []
+    _uv_missing: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for spec in _pkg_names if not spec.startswith('/') -%}
+        {%- if (spec | regex_replace('@.*$', '') | lower | regex_replace('[-_.]+', '-'))
+               not in _uv_installed_names -%}
+          {%- set ns.out = ns.out + [spec] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+  vars:
+    _uv_installed_names: >-
+      {{ _uv_installed.stdout_lines | select('match', '^[^-\s]\S* v\S+')
+         | map('split', ' ') | map('first') | list }}
+
+- name: "[uv] Find directory sources that need (re)installing"
+  ansible.builtin.include_tasks: uv_dir.yml
+  loop: "{{ _uv_dirs }}"
+  loop_control:
+    loop_var: _uv_dir
+
+- name: "[uv] Resolve what to install"
+  ansible.builtin.set_fact:
+    _uv_install: "{{ _uv_missing + _uv_stale_dirs }}"
+
+# Check mode skips `command`; this supplies the drift signal the install cannot.
+- name: "[uv] Report tools to install as drift"
+  ansible.builtin.debug:
+    msg: "{{ _uv_install | length }} uv tool(s) to install: {{ _uv_install | join(', ') }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - _uv_install | length > 0
+
+- name: "[uv] Install tools"
+  ansible.builtin.command:
+    argv: [uv, tool, install, "{{ item }}"]
+  loop: "{{ _uv_install }}"
+  changed_when: true
+  when: not ansible_check_mode

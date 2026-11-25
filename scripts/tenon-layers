@@ -218,7 +218,7 @@ lint_note_count=0
 # Platform profile names (roles/core/vars/platform/*.yml), and every package
 # manager any of them declares; check.sh asserts both match the profiles.
 LINT_PLATFORMS="Darwin Linux"
-LINT_MANAGERS="brew cask pacman aur flatpak"
+LINT_MANAGERS="brew cask pacman aur flatpak uv"
 # Layer var names that no role reads any more (renamed by the package
 # unification); a layer still setting one would silently install nothing.
 LINT_REMOVED_VARS="homebrew_baseline_formulae homebrew_baseline_casks homebrew_baseline_taps homebrew_adopt_casks homebrew_update upgrade_casks_exclude upgrade_casks_greedy packages_pacman_baseline packages_aur_baseline packages_flatpak_baseline"

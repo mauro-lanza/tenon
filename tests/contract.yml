@@ -137,6 +137,8 @@
           - tenon_packages_optional['cask'] == ['zed', 'visual-studio-code']
           - tenon_packages_optional['pacman'] == ['ripgrep', 'only-pacman', 'extra-pacman']
           - tenon_packages_optional['flatpak'] == ['org.example.Rg']
+          # Capability package strings are templated, so a layer can point at its own cached checkout.
+          - tenon_packages_optional['uv'] == ['rg-tool', tenon_layer_cache ~ '/override']
           - "'aur' not in tenon_packages_optional"
           # What gets installed: baseline (appended across layers) + optional,
           # deduplicated, for DETECTED managers only (the probes say brew, not pacman).

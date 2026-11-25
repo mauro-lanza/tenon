@@ -18,6 +18,7 @@ tenon_platform:
   package_managers:
     brew: /opt/homebrew/bin/brew
     cask: /opt/homebrew/bin/brew
+    uv: /opt/homebrew/bin/uv
   # Rendered into the runner, so it carries only this platform's commands.
   runner:
     # $1 = path; prints epoch seconds.

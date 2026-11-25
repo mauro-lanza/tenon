@@ -14,6 +14,13 @@
 #                       pacman:  Arch repository packages
 #                       aur:     AUR packages, built with paru
 #                       flatpak: flathub app ids, user installation
+#                       uv:      `uv tool install` targets: a PyPI name,
+#                                `name@git+https://…`, or an absolute directory
+#                                (written `{{ tenon_layer_cache }}/<this layer>`
+#                                for a source inside the layer). A directory is
+#                                reinstalled when a file in it is newer than the
+#                                last install; named tools install once and
+#                                follow `tenon upgrade`.
 #   extensions:       (optional) extension manager id (an `extension_managers`
 #                     entry in vars) -> space-separated extension ids
 #   requires:         (optional) another capability id; only prompt when that

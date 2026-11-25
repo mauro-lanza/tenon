@@ -1,0 +1,42 @@
+---
+# Vars: `_uv_dir`. Appends to `_uv_stale_dirs` when no tool receipt records
+# this directory, or a source file is newer than the receipt uv rewrote at the
+# last install.
+- name: "[uv] Find the receipt of {{ _uv_dir }}"
+  ansible.builtin.find:
+    paths: "{{ _uv_tool_dir.stdout | trim }}"
+    patterns: uv-receipt.toml
+    recurse: true
+    depth: 2
+    contains: 'directory = "{{ _uv_dir | regex_escape }}"'
+    read_whole_file: true
+  register: _uv_receipt
+
+- name: "[uv] Find files newer than the receipt"
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ _uv_dir }}"
+      - "("
+      - -name
+      - .git
+      - -o
+      - -name
+      - __pycache__
+      - ")"
+      - -prune
+      - -o
+      - -type
+      - f
+      - -newer
+      - "{{ _uv_receipt.files[0].path }}"
+      - -print
+  register: _uv_newer
+  changed_when: false
+  check_mode: false
+  when: _uv_receipt.files | length > 0
+
+- name: "[uv] Mark the directory for install"
+  ansible.builtin.set_fact:
+    _uv_stale_dirs: "{{ _uv_stale_dirs + [_uv_dir] }}"
+  when: _uv_receipt.files | length == 0 or _uv_newer.stdout | trim != ''

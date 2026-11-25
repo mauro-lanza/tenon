@@ -10,7 +10,20 @@
       '{{ item }}' is not a valid package name. Check the layers'
       packages_baseline and the capabilities' `packages:` mappings.
     quiet: true
-  loop: "{{ tenon_packages.values() | flatten }}"
+  loop: "{{ tenon_packages | dict2items | rejectattr('key', 'eq', 'uv') | map(attribute='value') | flatten }}"
+
+# uv specs are tool install targets (a name, `name@url`, an absolute path), so
+# `:` and the rest of a URL are legal; only a leading `-` is not.
+- name: Validate declared uv specs
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^[A-Za-z0-9/][^\s]*$')
+    fail_msg: >-
+      '{{ item }}' is not a valid uv spec: a PyPI name, name@url or an
+      absolute directory.
+    quiet: true
+  loop: "{{ tenon_packages.get('uv', []) }}"
 
 # Profile order, so e.g. pacman runs before aur (an AUR package's repo
 # dependencies are then already present).
