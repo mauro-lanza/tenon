@@ -1,0 +1,5 @@
+# keep this comment
+layers:
+  - {name: b, priority: 20, repo: r}
+  - {name: a, priority: 10, repo: r}
+selected_capabilities: [x]

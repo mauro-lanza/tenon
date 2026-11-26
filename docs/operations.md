@@ -41,7 +41,40 @@ one. Past `drift_correction_stale_after_days` (14 by default) it reports
 
 `tenon status --json` prints the same thing for machines. It is the
 interface a UI would consume; see "Run state" in
-[architecture.md](architecture.md) for the shape and its guarantees.
+[architecture.md](architecture.md) for the shape and its guarantees. It also
+carries `"schedule": {"upgrade": "09:00", "check": "10:00"}` (local times of the
+engine's own agents), `null` where there is no scheduler (Linux) or the agents
+are off.
+
+Non-interactive use (a UI, a script):
+
+```bash
+printf '%s\n' "$PW" | tenon upgrade --yes --password-stdin   # macOS: casks that need root
+printf '%s\n' "$PW" | tenon apply --password-stdin           # Linux: pacman, AUR, chsh
+tenon upgrade --yes </dev/null                               # no password: casks needing root fail
+```
+
+`--password-stdin` reads one line as the sudo password, checks it **once**
+(`sudo -S -k`, never retried: PAM lockout) and exits **65** with nothing run if
+it is wrong. An empty line skips root steps, like pressing Enter. The flag is
+rejected (64) where the platform asks for no password. `--yes` skips the
+`Proceed?` confirmation and the terminal requirement; `upgrade` still refuses
+without a terminal when it is absent. Neither flag makes a run partial.
+Exit codes: 64 usage, 65 wrong sudo password.
+
+The capability registry and the selection in `machine.yml`:
+
+```bash
+tenon capabilities --json        # {"capabilities": [{id, desc, layer, selected, active, requires?, platforms?}]}
+tenon capabilities select ID...  # edits selected_capabilities only; run `tenon apply` after
+tenon capabilities deselect ID...
+```
+
+`layer` is the highest-priority layer declaring the id; `active` is selected or
+adopted (`adopt_if_present` path exists); `platforms` lists where it installs
+or deploys anything (omitted if nowhere). Unknown ids exit 64 and change
+nothing. Deselecting never uninstalls: software and files stay, and show as
+orphans in `tenon manifest`.
 
 Ask what this system owns:
 

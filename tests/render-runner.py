@@ -25,6 +25,7 @@ with open(os.path.join(root, "roles/core/vars/platform", platform + ".yml")) as 
 env = jinja2.Environment(undefined=jinja2.StrictUndefined, keep_trailing_newline=True, trim_blocks=True)
 env.filters["expanduser"] = os.path.expanduser
 env.filters["quote"] = shlex.quote
+env.filters["bool"] = bool
 v = dict(
     tenon_repo_url="git@example.invalid:o/r.git", tenon_repo_branch="main",
     tenon_machine_file=t + "/none.yml", tenon_layer_cache=layer_cache,
@@ -35,6 +36,8 @@ v = dict(
     tenon_bin_dir=t + "/bin", tenon_schema_version=2,
     drift_correction_log_retention_days=30, drift_correction_stale_after_days=14,
     drift_correction_connectivity_timeout=1, tenon_repositories_override_file=t + "/repositories.yml",
+    drift_correction_enabled=True, drift_correction_schedule_hour=10, drift_correction_schedule_minute=0,
+    drift_correction_upgrade_schedule_hour=9, drift_correction_upgrade_schedule_minute=5,
     repositories_base_dir=t + "/repos",
     tenon_platform=profile,
 )

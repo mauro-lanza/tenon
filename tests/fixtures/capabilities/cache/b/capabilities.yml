@@ -1,0 +1,6 @@
+---
+capabilities:
+  - id: x
+    desc: override x
+    packages:
+      pacman: x

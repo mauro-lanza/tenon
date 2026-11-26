@@ -407,6 +407,70 @@ upgrade_tty() {
     HOME="$T/home" PATH="$T/bin:$PATH" "$RT_PY" "$T/ptyrun.py" "$2" "$1" "$T/bin/tenon" upgrade
 }
 
+# 16a. --password-stdin and --yes, against a sudo stub that accepts only "good".
+#      Darwin exercises `upgrade`, Linux `apply` (the only place each is used).
+cat > "$T/bin/sudo" <<STUB
+#!/bin/bash
+echo x >> "$T/sudo-calls"
+[[ "\$*" == *-S* ]] || exit 1
+read -r line
+[[ "\$line" == good ]]
+STUB
+chmod +x "$T/bin/sudo"
+if [[ "$(uname -s)" == Darwin ]]; then pw_cmd=(upgrade --yes --password-stdin); else pw_cmd=(apply --password-stdin); fi
+reset_pull() { rm -f "$T"/pull-{calls,args,pw,mode} "$T/sudo-calls"; }
+
+reset_pull
+printf 'good\n' | run "${pw_cmd[@]}" >/dev/null 2>&1 || fail "--password-stdin with the right password failed"
+[[ "$(cat "$T/pull-pw")" == good ]] || fail "TENON_SUDO_PASSWORD did not reach ansible-pull"
+[[ "$(wc -l < "$T/sudo-calls" | tr -d ' ')" == 1 ]] || fail "password validated more than once"
+[[ "$(cat "$(latest_log)")" != *good* ]] || fail "the password reached the run log"
+[[ "$(cat "$T/pull-mode")" == "apply 0" || "$(cat "$T/pull-mode")" == "upgrade 1" ]] || fail "--password-stdin changed partial: $(cat "$T/pull-mode")"
+[[ "$(cat "$T/pull-args")" != *password-stdin* ]] || fail "--password-stdin reached ansible-pull"
+
+reset_pull
+rc=0; err="$(printf 'bad\n' | run "${pw_cmd[@]}" 2>&1)" || rc=$?
+[[ "$rc" == 65 ]] || fail "wrong password exit $rc, want 65"
+[[ "$err" == *"incorrect sudo password"* ]] || fail "wrong password not explained: $err"
+[[ ! -e "$T/pull-calls" && "$(wc -l < "$T/sudo-calls" | tr -d ' ')" == 1 ]] || fail "wrong password ran or retried"
+
+reset_pull
+printf '\n' | run "${pw_cmd[@]}" >/dev/null 2>&1 || fail "an empty password line failed"
+[[ "$(cat "$T/pull-pw")" == UNSET && ! -e "$T/sudo-calls" ]] || fail "an empty password line was exported or validated"
+
+reset_pull
+run upgrade --yes </dev/null >/dev/null 2>&1 || fail "upgrade --yes without a terminal failed"
+[[ "$(cat "$T/pull-pw")" == UNSET && "$(cat "$T/pull-args")" == *"--tags upgrade -e tenon_upgrade_assume_yes=true local.yml"* ]] || fail "upgrade --yes ran wrongly"
+echo "  ok  --password-stdin: good, wrong (65, one try), empty; upgrade --yes without a terminal"
+
+# 16b. status --json schedule, from the render profile.
+if [[ "$(uname -s)" == Darwin ]]; then want='{"upgrade":"09:05","check":"10:00"}'; else want=null; fi
+[[ "$(run status --json | yq -p json -o json -I0 '.schedule')" == "$want" ]] || fail "status --json schedule wrong: $(run status --json)"
+echo "  ok  status --json: schedule"
+
+# 16c. capabilities: merged list, select/deselect keep the rest of machine.yml, unknown ids change nothing.
+mkdir -p "$T/cache"
+cp -R "$ROOT"/tests/fixtures/capabilities/cache/. "$T/cache/"
+cp "$ROOT/tests/fixtures/capabilities/machine.yml" "$T/none.yml"
+cp "$ROOT/scripts/tenon-layers" "$T/bin/tenon-layers"
+js="$(runc capabilities --json)"
+[[ "$(yq -p json -r '.capabilities | length' <<<"$js")" == 3 ]] || fail "capabilities list wrong: $js"
+[[ "$(yq -p json -r '.capabilities[] | select(.id == "x") | .layer + " " + .desc + " " + (.selected | tostring)' <<<"$js")" == "b override x true" ]] || fail "highest-priority layer did not win: $js"
+[[ "$(yq -p json -r '.capabilities[] | select(.id == "y") | .requires + " " + (.active | tostring) + " " + (.selected | tostring)' <<<"$js")" == "x true false" ]] || fail "requires/adopt wrong: $js"
+runc capabilities select flag y >/dev/null || fail "select failed"
+[[ "$(yq -o=json -I0 '.selected_capabilities' "$T/none.yml")" == '["x","flag","y"]' ]] || fail "select wrong: $(cat "$T/none.yml")"
+grep -q '^# keep this comment' "$T/none.yml" || fail "select dropped a comment"
+out="$(runc capabilities deselect x flag)" || fail "deselect failed"
+[[ "$out" == *"Nothing is uninstalled"* ]] || fail "deselect did not say it removes nothing: $out"
+[[ "$(yq -o=json -I0 '.selected_capabilities' "$T/none.yml")" == '["y"]' ]] || fail "deselect wrong: $(cat "$T/none.yml")"
+before="$(cat "$T/none.yml")"
+rc=0; err="$(runc capabilities select y nope 2>&1)" || rc=$?
+[[ "$rc" == 64 && "$err" == *"no layer declares capability 'nope'"* && "$(cat "$T/none.yml")" == "$before" ]] || fail "unknown id: rc=$rc $err"
+rc=0; runc capabilities select >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 64 ]] || fail "select with no ids exit $rc, want 64"
+rm -rf "$T/none.yml" "$T/cache" "$T/bin/tenon-layers"
+echo "  ok  capabilities: list, select, deselect, unknown id"
+
 # Linux upgrades need no root (no casks; pacman is left to a full system
 # upgrade), so there is no password prompt and nothing is exported.
 if [[ "$(uname -s)" != Darwin ]]; then

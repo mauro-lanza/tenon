@@ -1,0 +1,16 @@
+---
+capabilities:
+  - id: x
+    desc: base x
+    packages:
+      brew: x
+  - id: y
+    desc: y
+    requires: x
+    adopt_if_present: "{{ home_dir }}"
+    config:
+      - src: a
+        dest: b
+        platform: Linux
+  - id: flag
+    desc: flag only

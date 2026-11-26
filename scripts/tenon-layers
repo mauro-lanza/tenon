@@ -8,6 +8,10 @@ usage() {
 Usage:
   tenon-layers sync --manifest PATH --cache DIR [--schema-version N]
   tenon-layers lint (--cache DIR | --layer DIR) [--machine FILE]
+  tenon-layers capabilities (list | select ID... | deselect ID...) --manifest PATH --cache DIR [--homebrew-prefix DIR]
+
+capabilities  list prints the merged registry as JSON; select/deselect edit
+      selected_capabilities in the manifest (machine.yml) and install or remove nothing.
 
 sync  Synchronize content layers from a manifest into the layer cache. Repo URLs
       are used as written; a scheme-less github.com:owner/repo becomes SSH.
@@ -483,12 +487,103 @@ lint_layers() {
     log "  ok  $(lint_count "$all_caps") capabilities, $(lint_count "$all_questions") questions: all references resolve"
 }
 
+# ─── capabilities ────────────────────────────────────────────────────────────
+# Merged registry (highest-priority layer wins per id), as the engine builds it,
+# read from the synced cache. `select`/`deselect` edit only machine.yml.
+caps_registry() {
+    local manifest="$1" cache="$2" homebrew_prefix="$3"
+    local name ord=0 ndjson="" selected adopted="" id adopt
+    while IFS= read -r name; do
+        ord=$((ord + 1))
+        [[ -f "$cache/$name/capabilities.yml" ]] || continue
+        # shellcheck disable=SC2016 # `strenv` is yq's, not a shell expansion
+        ndjson+="$(layer="$name" ord="$ord" yq -o=json -I0 '.capabilities[]? | {
+            "id": .id, "desc": .desc, "layer": strenv(layer), "ord": (strenv(ord) | to_number),
+            "requires": .requires, "adopt": .adopt_if_present,
+            "platforms": ((if (.packages.brew != null or .packages.cask != null) then ["Darwin"] else [] end)
+                + (if (.packages.pacman != null or .packages.aur != null or .packages.flatpak != null) then ["Linux"] else [] end)
+                + (if ([.packages.uv, .extensions] | map(select(. != null)) | length) > 0 then ["Darwin", "Linux"] else [] end)
+                + [.config[]? | (.platform // ("Darwin", "Linux"))] | unique)}' \
+            "$cache/$name/capabilities.yml")"$'\n'
+    done < <(yq -r '.layers | sort_by(.priority) | .[].name' "$manifest")
+    [[ -n "$ndjson" ]] || { echo '[]'; return 0; }
+
+    local merged
+    merged="$(printf '%s' "$ndjson" | yq ea -p json -o json -I0 '[.] | group_by(.id) | map(sort_by(.ord) | .[-1])')"
+    selected=" $(yq -r '.selected_capabilities[]?' "$manifest" | tr '\n' ' ')"
+    while IFS=$'\t' read -r id adopt; do
+        [[ -n "$adopt" ]] || continue
+        adopt="${adopt//\{\{ home_dir \}\}/$HOME}"
+        adopt="${adopt//\{\{ homebrew_prefix \}\}/$homebrew_prefix}"
+        [[ -e "$adopt" ]] && adopted+=" $id "
+    done < <(printf '%s' "$merged" | yq -p json -r '.[] | select(.adopt != null) | .id + "\t" + .adopt')
+    # shellcheck disable=SC2016 # `$c` and `strenv` are yq's
+    printf '%s' "$merged" | selected="$selected" adopted="$adopted" yq -p json -o json -I0 \
+        'sort_by(.id) | map(. as $c
+            | .selected = (strenv(selected) | contains(" " + $c.id + " "))
+            | .active = (.selected or (strenv(adopted) | contains(" " + $c.id + " ")))
+            | del(.ord) | del(.adopt) | del(.requires | select(. == null)) | del(.platforms | select(length == 0)))'
+}
+
+capabilities() {
+    local sub="${1:-}" manifest="" cache="" homebrew_prefix=""
+    [[ $# -gt 0 ]] && shift
+    local -a ids=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --manifest) manifest="${2:?--manifest needs a value}"; shift 2 ;;
+            --cache) cache="${2:?--cache needs a value}"; shift 2 ;;
+            --homebrew-prefix) homebrew_prefix="${2:?--homebrew-prefix needs a value}"; shift 2 ;;
+            -*) die "Unknown argument: $1" ;;
+            *) ids+=("$1"); shift ;;
+        esac
+    done
+    [[ -f "$manifest" ]] || die "Layer manifest does not exist: ${manifest:-(--manifest not given)}"
+    [[ -d "$cache" ]] || die "No layer cache at: ${cache:-(--cache not given)}; run \`tenon layers sync\`"
+
+    local registry
+    registry="$(caps_registry "$manifest" "$cache" "$homebrew_prefix")"
+    case "$sub" in
+        list)
+            printf '{"capabilities": %s}\n' "$registry"
+            ;;
+        select|deselect)
+            [[ ${#ids[@]} -gt 0 ]] || { echo "Usage: tenon capabilities $sub <id>..." >&2; exit 64; }
+            local id known current
+            known="$(printf '%s' "$registry" | yq -p json -r '.[].id')"
+            current="$(yq -r '.selected_capabilities[]?' "$manifest")"
+            # Validated up front so a typo changes nothing. A stale id already in
+            # machine.yml may still be deselected.
+            for id in "${ids[@]}"; do
+                lint_has "$id" "$known" && continue
+                [[ "$sub" == deselect ]] && lint_has "$id" "$current" && continue
+                printf 'ERROR: no layer declares capability %s\n' "'$id'" >&2
+                exit 64
+            done
+            for id in "${ids[@]}"; do
+                if [[ "$sub" == select ]]; then
+                    id="$id" yq -i '.selected_capabilities = (((.selected_capabilities // []) + [strenv(id)]) | unique)' "$manifest"
+                else
+                    id="$id" yq -i 'del(.selected_capabilities[] | select(. == strenv(id)))' "$manifest"
+                fi
+            done
+            if [[ "$sub" == deselect ]]; then
+                echo "Deselected. Nothing is uninstalled: installed software and deployed files stay, and show as orphans in \`tenon manifest\`."
+            else
+                echo "Selected. Run \`tenon apply\` to install."
+            fi
+            ;;
+        *) die "Usage: tenon-layers capabilities list|select|deselect ..." ;;
+    esac
+}
+
 main() {
     local command="${1:-}"
     shift || true
     case "$command" in
         sync) sync_layers "$@" ;;
         lint) lint_layers "$@" ;;
+        capabilities) capabilities "$@" ;;
         -h|--help|"") usage ;;
         *) die "Unknown command: $command" ;;
     esac

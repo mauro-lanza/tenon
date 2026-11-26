@@ -208,6 +208,10 @@ Passwordless sudo (`sudo -n true` succeeds) skips all of this. With neither,
 the steps that need root are skipped and reported at the end of the play, like
 casks that need a password on macOS.
 
+`--password-stdin` (on `apply` here, `upgrade` on macOS) takes the same password
+as one stdin line for callers with no terminal; it is validated once the same
+way, and a wrong one exits 65 before anything runs.
+
 ## The question model
 
 A capability answers "do I want this tool?" — independently, yes or no. Some

@@ -59,6 +59,13 @@ BACKUP_CONFIG="{{ tenon_config_dir }}/backup.yml"
 BACKUP_REPO_DIR="{{ tenon_backup_repo_dir }}"
 # Days without a successful scheduled run before `status` reports STALE.
 STALE_AFTER_DAYS={{ drift_correction_stale_after_days }}
+# Local times of the engine's own scheduled agents, for `status --json`; null
+# where there is no scheduler or the agents are off.
+{% if tenon_platform.scheduler != 'none' and drift_correction_enabled | bool %}
+SCHEDULE_JSON='{"upgrade": "{{ '%02d:%02d' | format(drift_correction_upgrade_schedule_hour | int, drift_correction_upgrade_schedule_minute | int) }}", "check": "{{ '%02d:%02d' | format(drift_correction_schedule_hour | int, drift_correction_schedule_minute | int) }}"}'
+{% else %}
+SCHEDULE_JSON=null
+{% endif %}
 # Pinned in runtime.yml: an unattended `brew upgrade` must not move ansible-core.
 ANSIBLE_PULL="{{ tenon_runtime_bin }}/ansible-pull"
 
@@ -210,9 +217,11 @@ usage() {
     cat <<'EOF'
 tenon — operate this machine's configuration.
 
-  apply [args]     Reconcile now. Streams to your terminal.
+  apply [args]     Reconcile now. Streams to your terminal. --password-stdin reads the
+                   sudo password from one line of stdin (Linux).
   check [args]     Drift detection (--check --diff). Never mutates.
-  upgrade          Upgrade managed tools INCLUDING casks, after confirming.
+  upgrade [--yes] [--password-stdin]
+                   Upgrade managed tools INCLUDING casks, after confirming (--yes skips).
   log [n]          Tail the most recent run's log (default 100 lines).
   log --list       Every run log kept, newest first.
   status [--json]  What the last run did, and whether syncing has gone stale.
@@ -225,6 +234,8 @@ tenon — operate this machine's configuration.
   capture [args]   Diff live macOS defaults against the declared values.
 {% endif %}
   layers sync      Refresh the content-layer cache.
+  capabilities --json | select ID... | deselect ID...
+                   List the capability registry; edit machine.yml's selection (runs nothing).
   layers lint      Check that layer cross-references actually resolve.
   layers new NAME [DIR]  Scaffold a layer from the reference example (DIR defaults to ./NAME).
 
@@ -319,14 +330,29 @@ run_foreground() {
 }
 
 cmd_apply() {
-    local a
+    local a pw_stdin=0
+    local -a rest=()
     for a in "$@"; do
-        [[ "$a" == --check ]] || continue
-        printf '%s\n' "apply: --check is a dry run; use 'tenon check' (it accepts the same args)" >&2
-        return 64
+        case "$a" in
+            --check)
+                printf '%s\n' "apply: --check is a dry run; use 'tenon check' (it accepts the same args)" >&2
+                return 64 ;;
+            --password-stdin) pw_stdin=1 ;;
+            *) rest+=("$a") ;;
+        esac
     done
+    set -- "${rest[@]+"${rest[@]}"}"
 {% if tenon_platform.runner.sudo_on_apply %}
-    collect_sudo_password
+    if [[ $pw_stdin -eq 1 ]]; then
+        sudo_password_from_stdin || return $?
+    else
+        collect_sudo_password
+    fi
+{% else %}
+    if [[ $pw_stdin -eq 1 ]]; then
+        printf '%s\n' "apply: --password-stdin is not used on this platform" >&2
+        return 64
+    fi
 {% endif %}
     # No terminal (e.g. the tray app): a login remedy would hang on a browser flow.
     local -a mode_args=()
@@ -335,6 +361,29 @@ cmd_apply() {
     local rc=$?
     unset TENON_SUDO_PASSWORD
     return "$rc"
+}
+
+# Exit code when --password-stdin gets a wrong password. Documented in
+# docs/operations.md.
+EXIT_BAD_SUDO_PASSWORD=65
+
+# One line from stdin, checked once like the interactive path (a retry would
+# count toward a PAM lockout). Empty line skips, like pressing Enter.
+sudo_password_from_stdin() {
+    local pw
+    IFS= read -r pw || true
+    if [[ -z "$pw" ]]; then
+        echo "Skipping — anything that needs root is reported at the end."
+        return 0
+    fi
+    if printf '%s\n' "$pw" | sudo -S -k -p '' true 2>/dev/null; then
+        export TENON_SUDO_PASSWORD="$pw"
+        unset pw
+        return 0
+    fi
+    unset pw
+    printf '%s\n' "tenon: incorrect sudo password; nothing was run" >&2
+    return "$EXIT_BAD_SUDO_PASSWORD"
 }
 {% if tenon_platform.runner.sudo_on_apply %}
 
@@ -380,35 +429,59 @@ cmd_check() {
 # Confirms in this terminal: an Ansible `pause` blocks forever, or silently
 # skips, when stdin is not interactive.
 cmd_upgrade() {
-    if [[ ! -t 0 ]]; then
-        printf '%s\n' "tenon upgrade needs a terminal to confirm on." >&2
+    local a yes=0 pw_stdin=0
+    local -a rest=()
+    for a in "$@"; do
+        case "$a" in
+            --yes) yes=1 ;;
+            --password-stdin) pw_stdin=1 ;;
+            *) rest+=("$a") ;;
+        esac
+    done
+    set -- "${rest[@]+"${rest[@]}"}"
+    if [[ $yes -eq 0 && ! -t 0 ]]; then
+        printf '%s\n' "tenon upgrade needs a terminal to confirm on. Pass --yes to skip the confirmation." >&2
         printf '%s\n' "The scheduled agent runs the unattended, cask-free upgrade already." >&2
         return 1
     fi
+{% if not tenon_platform.runner.upgrade_sudo_prompt %}
+    if [[ $pw_stdin -eq 1 ]]; then
+        printf '%s\n' "upgrade: --password-stdin is not used on this platform" >&2
+        return 64
+    fi
+{% endif %}
     echo "tenon upgrade brings managed tools to their latest versions:"
     echo {{ ('  ' ~ tenon_platform.runner.upgrade_summary) | quote }}
 {% if tenon_platform.runner.upgrade_warning %}
     echo
     echo {{ tenon_platform.runner.upgrade_warning | quote }}
 {% endif %}
-    printf "Proceed? [y/N]: "
-    local reply
-    read -r reply
-    if [[ "$reply" != [Yy]* ]]; then
-        echo "Aborted — nothing changed."
-        return 0
+    if [[ $yes -eq 0 ]]; then
+        printf "Proceed? [y/N]: "
+        local reply
+        read -r reply
+        if [[ "$reply" != [Yy]* ]]; then
+            echo "Aborted — nothing changed."
+            return 0
+        fi
     fi
 {% if tenon_platform.runner.upgrade_sudo_prompt %}
     # Casks that need root get the password from the environment,
     # not `-e`, which would show it in the process list. The homebrew_cask module
-    # feeds it to sudo through an askpass helper.
-    local sudo_pw
-    echo
-    printf '%s' {{ tenon_platform.runner.upgrade_sudo_prompt | quote }}
-    read -rs sudo_pw
-    echo
-    [[ -n "$sudo_pw" ]] && export TENON_SUDO_PASSWORD="$sudo_pw"
-    unset sudo_pw
+    # feeds it to sudo through an askpass helper. With --yes and no terminal and
+    # no --password-stdin there is nobody to ask: casks needing root fail, as in
+    # the scheduled path.
+    if [[ $pw_stdin -eq 1 ]]; then
+        sudo_password_from_stdin || return $?
+    elif [[ -t 0 ]]; then
+        local sudo_pw
+        echo
+        printf '%s' {{ tenon_platform.runner.upgrade_sudo_prompt | quote }}
+        read -rs sudo_pw
+        echo
+        [[ -n "$sudo_pw" ]] && export TENON_SUDO_PASSWORD="$sudo_pw"
+        unset sudo_pw
+    fi
 {% endif %}
 
     # Taken after the prompts so a refusal wastes no confirmation. Logged like any
@@ -467,6 +540,7 @@ cmd_status() {
         printf '  "last_success": %s,\n' "$stamp"
         printf '  "days_since_success": %s,\n' "${days:-null}"
         printf '  "stale": %s,\n' "$( [[ -n "$days" && "$days" -ge "$STALE_AFTER_DAYS" ]] && echo true || echo false )"
+        printf '  "schedule": %s,\n' "$SCHEDULE_JSON"
         printf '  "days_since_upgrade_success": %s,\n' "$(days_since_success "$UPGRADE_SUCCESS_FILE" | grep . || echo null)"
         printf '  "last_run": '
         if [[ -f "$LAST_RUN_FILE" ]]; then cat "$LAST_RUN_FILE"; else printf 'null\n'; fi
@@ -896,6 +970,20 @@ cmd_layers() {
     exec "$LAYER_SYNC" "$sub" "${args[@]+"${args[@]}"}"
 }
 
+cmd_capabilities() {
+    local sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+        --json|list) sub=list ;;
+        select|deselect) ;;
+        *)
+            printf '%s\n' "Usage: tenon capabilities --json | select ID... | deselect ID..." >&2
+            return 64 ;;
+    esac
+    "$LAYER_SYNC" capabilities "$sub" --manifest "$MACHINE_FILE" --cache "$LAYER_CACHE" \
+        --homebrew-prefix {{ tenon_platform.homebrew_prefix | quote }} "$@"
+}
+
 # ─── Dispatch ────────────────────────────────────────────────────────────────
 COMMAND="${1:-}"
 shift 2>/dev/null || true
@@ -915,6 +1003,7 @@ case "$COMMAND" in
     capture)            cmd_capture "$@" ;;
 {% endif %}
     layers)             cmd_layers "$@" ;;
+    capabilities)       cmd_capabilities "$@" ;;
     _scheduled-check)   run_scheduled check "$@" ;;
     _scheduled-upgrade) run_scheduled upgrade "$@" ;;
     -h|--help|help|"")  usage ;;
