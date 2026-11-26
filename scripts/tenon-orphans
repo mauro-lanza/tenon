@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """List, remove and forget the orphans recorded in the manifest (docs/architecture.md, "Orphans").
 
-    tenon-orphans list   --manifest FILE --brew-prefix DIR [--json]
-    tenon-orphans remove --manifest FILE --brew-prefix DIR --trash-dir DIR [--force] [--json] ID...
-    tenon-orphans forget --manifest FILE [--json] ID...
+    tenon-orphans list   REGISTRY --manifest FILE [--json]
+    tenon-orphans remove REGISTRY --manifest FILE --trash-dir DIR [--force] [--json] ID...
+    tenon-orphans forget REGISTRY --manifest FILE [--json] ID...
 
+REGISTRY is --brew-prefix DIR --layers-bin PATH --machine-file FILE --layer-cache DIR: the
+last three let packages of unselected capabilities be found (`tenon-layers capabilities list`).
 Run by `tenon orphans`, which holds the run lock for remove and forget.
 Exit codes: 0 done, 1 something skipped or failed, 64 unknown id or bad usage.
 """
@@ -103,7 +105,7 @@ def file_safety(path, recorded):
     return True, "unchanged since tenon wrote it"
 
 
-def collect(manifest, brew_prefix):
+def collect(manifest, brew_prefix, registry):
     """Every orphan still present, keyed by id; package orphans need `brew list` once per manager."""
     found = {}
     for entry in dict_entries(manifest, "orphans"):
@@ -117,20 +119,51 @@ def collect(manifest, brew_prefix):
             "since": entry.get("since"), "safe": safe, "reason": reason,
         }
     desired = {(e.get("manager"), e.get("name")) for e in dict_entries(manifest, "packages")}
-    stored = [e for e in dict_entries(manifest, "package_orphans")
-              if e.get("manager") in BREW_FLAGS and isinstance(e.get("name"), str)
-              and (e["manager"], e["name"]) not in desired]
-    installed = {m: installed_names(m, brew_prefix) for m in {e["manager"] for e in stored}}
-    for entry in stored:
-        names = installed[entry["manager"]]
-        if names is None or short_name(entry["name"]) not in names:
+    forgotten = set(manifest["forgotten"]) if isinstance(manifest.get("forgotten"), list) else set()
+    wanted = {}
+    for entry in dict_entries(manifest, "package_orphans"):
+        if (entry.get("manager") in BREW_FLAGS and isinstance(entry.get("name"), str)
+                and (entry["manager"], entry["name"]) not in desired):
+            wanted[(entry["manager"], entry["name"])] = (entry, PACKAGE_REASON)
+    for entry in registry_candidates(manifest, desired, registry):
+        wanted.setdefault((entry["manager"], entry["name"]), (
+            entry, f"declared by unselected capability {entry['capability']}; may have been installed outside tenon"))
+    wanted = {k: v for k, v in wanted.items() if orphan_id("package", k[0], k[1]) not in forgotten}
+    installed = {m: installed_names(m, brew_prefix) for m in {k[0] for k in wanted}}
+    for (manager, name), (entry, reason) in wanted.items():
+        names = installed[manager]
+        if names is None or short_name(name) not in names:
             continue
-        found[orphan_id("package", entry["manager"], entry["name"])] = {
-            "kind": "package", "manager": entry["manager"], "path": None, "name": entry["name"],
+        found[orphan_id("package", manager, name)] = {
+            "kind": "package", "manager": manager, "path": None, "name": name,
             "layer": entry.get("layer"), "capability": entry.get("capability"),
-            "since": entry.get("since"), "safe": False, "reason": PACKAGE_REASON,
+            "since": entry.get("since"), "safe": False, "reason": reason,
         }
     return found
+
+
+def registry_candidates(manifest, desired, registry):
+    """brew/cask packages declared only by capabilities that are neither selected nor adopted, from `tenon-layers capabilities list`."""
+    if registry is None or not isinstance(manifest.get("packages"), list):
+        return []
+    layers_bin, machine_file, layer_cache, brew_prefix = registry
+    if not os.path.isfile(machine_file):
+        return []
+    try:
+        done = subprocess.run([layers_bin, "capabilities", "list", "--manifest", machine_file, "--cache", layer_cache,
+                               "--homebrew-prefix", brew_prefix], capture_output=True, text=True, timeout=60)
+        capabilities = json.loads(done.stdout)["capabilities"] if done.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        return []
+    declared = {}
+    for cap in capabilities:
+        packages = cap.get("packages") if isinstance(cap.get("packages"), dict) else {}
+        for manager in BREW_FLAGS:
+            for name in str(packages.get(manager) or "").split():
+                declared.setdefault((manager, name), []).append(cap)
+    return [{"manager": m, "name": n, "layer": caps[0].get("layer"), "capability": caps[0].get("id")}
+            for (m, n), caps in sorted(declared.items())
+            if (m, n) not in desired and not any(c.get("active") for c in caps)]
 
 
 def sorted_orphans(found):
@@ -138,11 +171,12 @@ def sorted_orphans(found):
 
 
 def drop(manifest, ids):
-    """The manifest without the orphans whose ids are given (both stored lists)."""
+    """The manifest without the orphans whose ids are given (every stored list)."""
     manifest["orphans"] = [e for e in dict_entries(manifest, "orphans")
                            if orphan_id("file", None, e.get("path")) not in ids]
-    manifest["package_orphans"] = [e for e in dict_entries(manifest, "package_orphans")
-                                   if orphan_id("package", e.get("manager"), e.get("name")) not in ids]
+    for key in ("package_orphans", "unselected_packages"):
+        manifest[key] = [e for e in dict_entries(manifest, key)
+                         if orphan_id("package", e.get("manager"), e.get("name")) not in ids]
 
 
 def emit_results(results, as_json):
@@ -154,7 +188,7 @@ def emit_results(results, as_json):
 
 
 def cmd_list(args):
-    found = collect(load_manifest(args.manifest), args.brew_prefix)
+    found = collect(load_manifest(args.manifest), args.brew_prefix, registry_of(args))
     rows = [{"id": i, **o} for i, o in sorted_orphans(found)]
     if args.json:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "orphans": rows}))
@@ -209,7 +243,7 @@ def remove_package(manager, name, brew_prefix):
 
 def cmd_remove(args):
     manifest = load_manifest(args.manifest)
-    found = collect(manifest, args.brew_prefix)
+    found = collect(manifest, args.brew_prefix, registry_of(args))
     known_or_exit(found, args.ids)
     trash_root = os.path.join(args.trash_dir, time.strftime("%Y%m%d-%H%M%S"))
     results, handled = [], set()
@@ -237,18 +271,28 @@ def cmd_remove(args):
 
 def cmd_forget(args):
     manifest = load_manifest(args.manifest)
-    stored = {}
+    found = collect(manifest, args.brew_prefix, registry_of(args))
+    packages = {i for i, o in found.items() if o["kind"] == "package"}
+    known = set(found)
     for e in dict_entries(manifest, "orphans"):
-        stored[orphan_id("file", None, e.get("path"))] = e.get("path")
-    for e in dict_entries(manifest, "package_orphans"):
-        stored[orphan_id("package", e.get("manager"), e.get("name"))] = e.get("name")
-    known_or_exit(stored, args.ids)
+        known.add(orphan_id("file", None, e.get("path")))
+    for key in ("package_orphans", "unselected_packages"):
+        for e in dict_entries(manifest, key):
+            packages.add(orphan_id("package", e.get("manager"), e.get("name")))
+    known_or_exit(known | packages, args.ids)
     ids = set(args.ids)
     drop(manifest, ids)
+    # Package ids stay forgotten, or the registry-derived source would list them again.
+    forgotten = set(manifest["forgotten"]) if isinstance(manifest.get("forgotten"), list) else set()
+    manifest["forgotten"] = sorted(forgotten | (ids & packages))
     write_manifest(args.manifest, manifest)
     emit_results([{"id": i, "ok": True, "message": "forgotten; nothing was touched"}
                   for i in dict.fromkeys(args.ids)], args.json)
     return 0
+
+
+def registry_of(args):
+    return (args.layers_bin, args.machine_file, args.layer_cache, args.brew_prefix)
 
 
 def main():
@@ -259,8 +303,8 @@ def main():
         p.set_defaults(handler=handler)
         p.add_argument("--manifest", required=True)
         p.add_argument("--json", action="store_true")
-        if name != "forget":
-            p.add_argument("--brew-prefix", required=True)
+        for option in ("--brew-prefix", "--layers-bin", "--machine-file", "--layer-cache"):
+            p.add_argument(option, required=True)
         if name == "remove":
             p.add_argument("--trash-dir", required=True)
             p.add_argument("--force", action="store_true")

@@ -698,10 +698,13 @@ echo "  ok  a malformed previous manifest does not stop the next one being writt
 # what drops out is carried forward. A partial, check or failed run must neither
 # create orphans nor erase the last complete record.
 cs_pdir2="$(mktemp -d "$TENON_TMP/pkgs.XXXXXX")"
+mkdir "$cs_pdir2/bin"
+printf '%s\n' '#!/bin/bash' 'case "$*" in' '  "list --formula"*) printf "jq\nofff\n" ;;' '  "list --cask"*) printf "appa\noffc\n" ;;' 'esac' > "$cs_pdir2/bin/brew"
+chmod +x "$cs_pdir2/bin/brew"
 cs_pk() { # ID PARTIAL PACKAGES_JSON [extra ansible args]
     local id="$1" partial="$2" pk="$3"
     shift 3
-    cs_run apply "$partial" "$id" ANSIBLE_ROLES_PATH="$PWD/roles" TENON_MANIFEST_FILE="$cs_pdir2/managed-paths.json" \
+    cs_run apply "$partial" "$id" ANSIBLE_ROLES_PATH="$PWD/roles" PATH="$cs_pdir2/bin:$PATH" TENON_MANIFEST_FILE="$cs_pdir2/managed-paths.json" \
         tests/packages-record.yml -e "m=$cs_pdir2/scratch" -e "{\"tenon_packages\": $pk}" "$@"
 }
 cs_pk pk-1 0 '{"brew": ["jq", "wget"], "cask": ["appa"]}'
@@ -716,6 +719,10 @@ assert m["packages"] == want, m["packages"]
 assert [(o["manager"], o["name"], o["layer"], o["capability"]) for o in m["package_orphans"]] == \
     [("brew", "wget", None, None), ("cask", "appa", "lay", "cap-a")], m["package_orphans"]
 assert all(o["since"] for o in m["package_orphans"]), m["package_orphans"]
+# Installed, declared only by an unselected capability, not desired: offf and offc.
+# Not installed (notinstalled) or a manager not detected (pacman) never appear.
+assert [(u["manager"], u["name"], u["layer"], u["capability"]) for u in m["unselected_packages"]] == \
+    [("brew", "offf", "lay", "cap-off"), ("cask", "offc", "lay", "cap-off")], m["unselected_packages"]
 PYEOF
 cs_pk pk-3 1 '{"brew": [], "cask": []}'
 cs_pk pk-4 0 '{"brew": [], "cask": []}' --check
@@ -727,11 +734,21 @@ cs_py "$cs_pdir2" <<'PYEOF'
 m = load("managed-paths.json")
 assert [p["name"] for p in m["packages"]] == ["jq"], f"a partial, check or failed run changed the record: {m['packages']}"
 assert [o["name"] for o in m["package_orphans"]] == ["wget", "appa"], m["package_orphans"]
+assert [u["name"] for u in m["unselected_packages"]] == ["offf", "offc"], "a non-complete run changed the unselected list"
+PYEOF
+cs_py "$cs_pdir2" <<'PYEOF'
+import hashlib
+p = os.path.join(d, "managed-paths.json")
+m = load("managed-paths.json")
+m["forgotten"] = [hashlib.sha256(b"package\0brew\0offf").hexdigest()[:12]]
+json.dump(m, open(p, "w"))
 PYEOF
 cs_pk pk-6 0 '{"brew": ["jq", "wget"], "cask": []}'
 cs_py "$cs_pdir2" <<'PYEOF'
 m = load("managed-paths.json")
 assert [o["name"] for o in m["package_orphans"]] == ["appa"], f"a re-desired package stayed an orphan: {m['package_orphans']}"
+assert [u["name"] for u in m["unselected_packages"]] == ["offc"], f"a forgotten package came back: {m['unselected_packages']}"
+assert len(m["forgotten"]) == 1, m["forgotten"]
 print("  ok  package set recorded, orphans carried, unchanged by partial/check/failed runs, cleared when desired again")
 PYEOF
 }

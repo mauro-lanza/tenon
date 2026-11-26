@@ -65,7 +65,7 @@ Exit codes: see "Exit codes" below.
 The capability registry and the selection in `machine.yml`:
 
 ```bash
-tenon capabilities --json        # {"schema_version": 1, "capabilities": [{id, desc, layer, selected, active, requires?, platforms?}]}
+tenon capabilities --json        # {"schema_version": 1, "capabilities": [{id, desc, layer, selected, active, requires?, platforms?, packages?}]}
 tenon capabilities select ID...  # edits selected_capabilities only; run `tenon apply` after
 tenon capabilities deselect ID...
 ```
@@ -349,7 +349,7 @@ Everything else in the state directory is internal.
 | `current_run` | `null` when idle, else the object below |
 | `last_success`, `days_since_success`, `stale` | last successful scheduled run (`null`, `null`, `false` if none) |
 | `days_since_upgrade_success` | days since the last scheduled upgrade, `null` if none |
-| `orphans` | count of stored orphans (files + packages), `0` if none; not re-checked against disk or `brew list`, so a package removed by hand counts until the next run |
+| `orphans` | count of stored orphans (files, packages, installed packages of unselected capabilities as of the last complete run), `0` if none; never runs `brew list`, so a package removed by hand counts until the next run |
 | `schedule` | `{"upgrade": "HH:MM", "check": "HH:MM"}`, or `null` |
 | `last_run` | the `last-run.json` contents, `null` if none |
 
@@ -388,6 +388,10 @@ with no recorded checksum and all packages are never safe. `layer` and
 `capability` are `null` where tenon cannot tell (baseline packages have no layer;
 file orphans carry no capability). `tenon orphans` without `--json` prints the
 same list. Packages are listed only while `brew list` still reports them installed.
+Besides packages that dropped out of the desired set, a package declared only by a
+capability that is neither selected nor adopted is listed (reason `declared by
+unselected capability <id>; may have been installed outside tenon`), whenever it is
+installed; `forget` keeps such an id hidden.
 
 `tenon orphans remove [--force] [--json] [--password-stdin] ID...` and
 `tenon orphans forget [--json] ID...` print `{"results": [{"id", "ok", "message"}]}`

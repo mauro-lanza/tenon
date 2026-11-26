@@ -13,6 +13,14 @@
         id: cap-a
         layer: lay
         packages: {brew: "jq", cask: "appa"}
+      cap-off:
+        id: cap-off
+        layer: lay
+        packages: {brew: "offf", cask: "offc", pacman: "offp"}
+      cap-never:
+        id: cap-never
+        layer: lay
+        packages: {brew: "notinstalled"}
     fail_after: false
   tasks:
     - name: A managed directory, so the manifest has something to say

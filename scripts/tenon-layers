@@ -499,7 +499,7 @@ caps_registry() {
         # shellcheck disable=SC2016 # `strenv` is yq's, not a shell expansion
         ndjson+="$(layer="$name" ord="$ord" yq -o=json -I0 '.capabilities[]? | {
             "id": .id, "desc": .desc, "layer": strenv(layer), "ord": (strenv(ord) | to_number),
-            "requires": .requires, "adopt": .adopt_if_present,
+            "requires": .requires, "adopt": .adopt_if_present, "packages": .packages,
             "platforms": ((if (.packages.brew != null or .packages.cask != null) then ["Darwin"] else [] end)
                 + (if (.packages.pacman != null or .packages.aur != null or .packages.flatpak != null) then ["Linux"] else [] end)
                 + (if ([.packages.uv, .extensions] | map(select(. != null)) | length) > 0 then ["Darwin", "Linux"] else [] end)
@@ -522,7 +522,7 @@ caps_registry() {
         'sort_by(.id) | map(. as $c
             | .selected = (strenv(selected) | contains(" " + $c.id + " "))
             | .active = (.selected or (strenv(adopted) | contains(" " + $c.id + " ")))
-            | del(.ord) | del(.adopt) | del(.requires | select(. == null)) | del(.platforms | select(length == 0)))'
+            | del(.ord) | del(.adopt) | del(.requires | select(. == null)) | del(.packages | select(. == null)) | del(.platforms | select(length == 0)))'
 }
 
 capabilities() {

@@ -653,6 +653,46 @@ rc=0; runc capabilities select >/dev/null 2>&1 || rc=$?
 rm -rf "$T/none.yml" "$T/cache" "$T/bin/tenon-layers"
 echo "  ok  capabilities: list, select, deselect, unknown id"
 
+# 16d. orphans declared by unselected capabilities: found from the registry, deduped, forgettable, removable.
+mkdir -p "$T/cache"
+cp -R "$ROOT"/tests/fixtures/orphan-caps/cache/. "$T/cache/"
+cp "$ROOT/tests/fixtures/orphan-caps/machine.yml" "$T/none.yml"
+cp "$ROOT/scripts/tenon-layers" "$T/bin/tenon-layers"
+printf 'offc\n' > "$T/cask-installed"
+cat > "$T/bin/brew" <<STUB
+#!/bin/bash
+echo "\$*" >> "$T/brew-calls"
+case "\$1 \$2" in
+    "list --formula") printf 'keepme\nofff\nadopted\n' ;;
+    "list --cask") cat "$T/cask-installed" ;;
+    "uninstall --cask") : > "$T/cask-installed" ;;
+esac
+STUB
+chmod +x "$T/bin/brew"
+"$RT_PY" - "$T" <<'PY'
+import json, sys
+t = sys.argv[1]
+pkg = lambda m, n: {"manager": m, "name": n, "layer": "l", "capability": "off"}
+json.dump({"files": [], "orphans": [], "package_orphans": [],
+           "packages": [{"manager": "brew", "name": "keepme", "layer": None, "capability": None}],
+           "unselected_packages": [pkg("brew", "offf"), pkg("cask", "offc")]},
+          open(t + "/state/managed-paths.json", "w"))
+PY
+rm -f "$T/brew-calls"
+js="$(runc orphans --json)"
+[[ "$(yq -p json -r '[.orphans[] | .manager + ":" + .name] | sort | join(",")' <<<"$js")" == "brew:offf,cask:offc" ]] || fail "registry-derived orphans wrong: $js"
+[[ "$(yq -p json -r '.orphans[] | select(.name == "offf") | .layer + " " + .capability + " " + (.safe | tostring) + " " + .reason' <<<"$js")" == "l off false declared by unselected capability off; may have been installed outside tenon" ]] || fail "attribution/reason wrong: $js"
+[[ "$(grep -c '^list ' "$T/brew-calls")" == 2 ]] || fail "brew list did not run once per manager: $(cat "$T/brew-calls")"
+[[ "$(runc status --json | yq -p json -r '.orphans')" == 2 ]] || fail "status --json does not count unselected packages"
+coid() { runc orphans --json | yq -p json -r '.orphans[] | select(.name == "'"$1"'") | .id'; }
+runc orphans forget "$(coid offf)" >/dev/null || fail "forget of a registry-derived orphan failed"
+[[ -z "$(coid offf)" && "$(yq -p json -r '.forgotten | length' "$T/state/managed-paths.json")" == 1 ]] || fail "a forgotten package reappeared or was not stored"
+[[ "$(runc status --json | yq -p json -r '.orphans')" == 1 ]] || fail "a forgotten package is still counted"
+runc orphans remove "$(coid offc)" >/dev/null || fail "removing a registry-derived package failed"
+[[ "$(grep -c '^uninstall --cask offc$' "$T/brew-calls")" == 1 && -z "$(coid offc)" ]] || fail "registry-derived package not uninstalled: $(cat "$T/brew-calls")"
+rm -rf "$T/none.yml" "$T/cache" "$T/bin/tenon-layers" "$T/bin/brew" "$T/cask-installed" "$T/brew-calls" "$T/state/managed-paths.json"
+echo "  ok  orphans: unselected capabilities' installed packages listed, counted, forgettable, removable"
+
 # Linux upgrades need no root (no casks; pacman is left to a full system
 # upgrade), so there is no password prompt and nothing is exported.
 if [[ "$(uname -s)" != Darwin ]]; then

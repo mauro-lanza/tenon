@@ -154,6 +154,8 @@ class CallbackModule(CallbackBase):
         self.layer_cache = os.environ.get("TENON_LAYER_CACHE") or ""
         # Reported by the packages role as a task result; None until it runs.
         self.desired_packages = None
+        # Installed packages that only unselected capabilities declare.
+        self.unselected_packages = None
         # The plugin is constructed as the play starts, so this is the run's
         # start within a second. Recorded because "the 10:00 check now takes
         # four minutes" is a thing worth being able to see, and it cannot be
@@ -432,6 +434,8 @@ class CallbackModule(CallbackBase):
             facts = result._result.get("ansible_facts")
             if isinstance(facts, dict) and "tenon_desired_packages" in facts:
                 self.desired_packages = self._valid_packages(facts["tenon_desired_packages"])
+            if isinstance(facts, dict) and "tenon_unselected_packages" in facts:
+                self.unselected_packages = self._valid_packages(facts["tenon_unselected_packages"])
         except Exception:
             pass
 
@@ -552,6 +556,17 @@ class CallbackModule(CallbackBase):
             for key in ("packages", "package_orphans"):
                 if isinstance(previous.get(key), list):
                     payload[key] = previous[key]
+        # Forgotten package ids (written by `tenon orphans forget`) outlive runs.
+        forgotten = [i for i in previous.get("forgotten", []) if isinstance(i, str)] \
+            if isinstance(previous.get("forgotten"), list) else []
+        if forgotten:
+            payload["forgotten"] = forgotten
+        if self.unselected_packages is not None and not self.check_mode:
+            payload["unselected_packages"] = [
+                e for e in self.unselected_packages
+                if hashlib.sha256(f"package\0{e['manager']}\0{e['name']}".encode()).hexdigest()[:12] not in forgotten]
+        elif isinstance(previous.get("unselected_packages"), list):
+            payload["unselected_packages"] = previous["unselected_packages"]
         # Checksums carry over where this run did not (or could not) write the
         # bytes: a check run, or a whole-file task that left the file alone.
         recorded = {e.get("path"): e for e in previous.get("files") or [] if isinstance(e, dict)}

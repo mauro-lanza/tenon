@@ -625,7 +625,11 @@ anything else needs `--force`. Packages are never `safe`, since tenon cannot kno
 they were not installed before it, and directories are never removed. The desired
 package set is reported by the packages role as a task result and, like the file
 list, recorded only by complete non-check runs; whether an orphaned package is
-still installed is asked of `brew list` when listing, not on every run.
+still installed is asked of `brew list` when listing, not on every run. A package
+declared only by an unselected, un-adopted capability and installed is an orphan
+too (found from the layer registry at list time, and recorded by complete runs as
+`unselected_packages` so `status` counts it without `brew list`); forgotten
+package ids persist in `forgotten`.
 
 Three properties, each gated:
 

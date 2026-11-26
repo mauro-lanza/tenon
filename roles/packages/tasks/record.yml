@@ -28,3 +28,53 @@
         {%- endfor -%}
       {%- endfor -%}
       {{ ns.out }}
+
+# Installed packages that only an unselected, un-adopted capability declares.
+# Listed once per run here so `status` can count them without `brew list`.
+- name: List installed formulae and casks
+  ansible.builtin.command:
+    argv: [brew, list, "{{ item }}", --full-name, "-1"]
+  loop: ["--formula", "--cask"]
+  register: _installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  environment:
+    PATH: "{{ lookup('env', 'PATH') }}:{{ (tenon_platform | default({})).get('homebrew_prefix', '/opt/homebrew') }}/bin"
+  when: (tenon_package_managers | intersect(['brew', 'cask']) | length > 0) and not ansible_check_mode
+
+- name: Record installed packages declared only by unselected capabilities
+  ansible.builtin.set_fact:
+    tenon_unselected_packages: >-
+      {%- set inst = {'brew': _formula, 'cask': _cask} -%}
+      {%- set ns = namespace(active=[], cand=[], out=[], seen=[]) -%}
+      {%- for id, e in tenon_capability_registry.items() if e.packages is defined -%}
+        {%- for m in ['brew', 'cask'] if m in tenon_package_managers and e.packages.get(m) -%}
+          {%- for n in e.packages[m] | split -%}
+            {%- if id in _active -%}
+              {%- set ns.active = ns.active + [m ~ ' ' ~ n] -%}
+            {%- else -%}
+              {%- set ns.cand = ns.cand + [{'manager': m, 'name': n, 'layer': e.layer | default(none), 'capability': id}] -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- for c in ns.cand -%}
+        {%- set key = c.manager ~ ' ' ~ c.name -%}
+        {%- if key not in ns.active and key not in ns.seen
+              and c.name not in tenon_packages.get(c.manager, [])
+              and (c.name | regex_replace('^.*/', '')) in inst[c.manager] -%}
+          {%- set ns.seen = ns.seen + [key] -%}
+          {%- set ns.out = ns.out + [c] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+  vars:
+    _active: "{{ ((tenon_active_capabilities | default([])) + (selected_capabilities | default([], true))) | unique | list }}"
+    _formula: >-
+      {{ (_installed.results[0].stdout_lines if _installed.results[0].rc | default(1) == 0 else [])
+         | map('regex_replace', '^.*/', '') | list }}
+    _cask: >-
+      {{ (_installed.results[1].stdout_lines if _installed.results[1].rc | default(1) == 0 else [])
+         | map('regex_replace', '^.*/', '') | list }}
+  when: (tenon_package_managers | intersect(['brew', 'cask']) | length > 0) and not ansible_check_mode

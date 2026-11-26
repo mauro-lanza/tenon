@@ -695,13 +695,14 @@ TRASH_DIR="${BACKUP_REPO_DIR}/trash"
 # Stored orphans only: `brew list` is too slow for a command a UI polls.
 orphan_count() {
     local n
-    n="$(yq -r '(.orphans // [] | length) + (.package_orphans // [] | length)' "$MANIFEST_FILE" 2>/dev/null || true)"
+    n="$(yq -r '(.orphans // [] | length) + (.package_orphans // [] | length) + (.unselected_packages // [] | length)' "$MANIFEST_FILE" 2>/dev/null || true)"
     if [[ "$n" =~ ^[0-9]+$ ]]; then echo "$n"; else echo 0; fi
 }
 
 cmd_orphans() {
     local sub=list a pw_stdin=0 n_ids=0
     local -a ids=() flags=()
+    local -a registry=(--brew-prefix "$BREW_PREFIX" --layers-bin "$LAYER_SYNC" --machine-file "$MACHINE_FILE" --layer-cache "$LAYER_CACHE")
     if [[ $# -gt 0 && "$1" != -* ]]; then sub="$1"; shift; fi
     case "$sub" in list|remove|forget) ;; *)
         printf '%s\n' "Usage: tenon orphans [--json] | remove [--force] [--json] [--password-stdin] ID... | forget [--json] ID..." >&2
@@ -720,7 +721,7 @@ cmd_orphans() {
     done
     if [[ "$sub" == list ]]; then
         [[ $n_ids -eq 0 ]] || { printf '%s\n' "orphans: list takes no ids" >&2; return 64; }
-        "$ORPHANS_PY" "$ORPHANS_BIN" list --manifest "$MANIFEST_FILE" --brew-prefix "$BREW_PREFIX" "${flags[@]+"${flags[@]}"}"
+        "$ORPHANS_PY" "$ORPHANS_BIN" list --manifest "$MANIFEST_FILE" "${registry[@]}" "${flags[@]+"${flags[@]}"}"
         return $?
     fi
     [[ $n_ids -gt 0 ]] || { printf '%s\n' "orphans ${sub}: give at least one id (see \`tenon orphans\`)" >&2; return 64; }
@@ -738,10 +739,10 @@ cmd_orphans() {
     fi
 {% endif %}
     if [[ "$sub" == remove ]]; then
-        "$ORPHANS_PY" "$ORPHANS_BIN" remove --manifest "$MANIFEST_FILE" --brew-prefix "$BREW_PREFIX" \
+        "$ORPHANS_PY" "$ORPHANS_BIN" remove --manifest "$MANIFEST_FILE" "${registry[@]}" \
             --trash-dir "$TRASH_DIR" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
     else
-        "$ORPHANS_PY" "$ORPHANS_BIN" forget --manifest "$MANIFEST_FILE" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
+        "$ORPHANS_PY" "$ORPHANS_BIN" forget --manifest "$MANIFEST_FILE" "${registry[@]}" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
     fi
     rc=$?
     unset TENON_SUDO_PASSWORD
