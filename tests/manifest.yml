@@ -27,6 +27,14 @@
         content: "v1\n"
         mode: "0644"
 
+    # Sourced from a fixture layer cache (TENON_LAYER_CACHE), so the manifest can
+    # name the layer it came from.
+    - name: A file deployed from a layer
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/layers_cache/base/vars.yml"
+        dest: "{{ m }}/layered.conf"
+        mode: "0644"
+
     # Deployed a second time with backup:true and different content, so Ansible
     # leaves <dest>.<pid>.<date>@<time>~ beside it. Nothing in this system ever
     # removes those, so the manifest has to name them — and it can, because the

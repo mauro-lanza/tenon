@@ -491,6 +491,127 @@ if [[ "$(uname -s)" == Darwin ]]; then want='{"upgrade":"09:05","check":"10:00"}
 [[ "$(run status --json | yq -p json -o json -I0 '.schedule')" == "$want" ]] || fail "status --json schedule wrong: $(run status --json)"
 echo "  ok  status --json: schedule"
 
+# 16b2. orphans: list with safe/unsafe, then remove/forget against a fixture manifest and a stub brew.
+mkdir -p "$T/tools/ansible-core/bin" "$T/orph/dir" "$T/backups"
+ln -sf "$RT_PY" "$T/tools/ansible-core/bin/python"
+cp "$ROOT/scripts/tenon-orphans" "$T/bin/tenon-orphans"
+printf 'one\n' > "$T/orph/clean"; printf 'changed\n' > "$T/orph/edited"; printf 'x\n' > "$T/orph/nosha"
+printf 'a\n' > "$T/orph/forgotten"; printf 'b\n' > "$T/orph/forced"
+"$RT_PY" - "$T" <<'PY'
+import hashlib, json, sys
+t = sys.argv[1]; o = t + "/orph"
+h = lambda b: hashlib.sha256(b).hexdigest()
+pkg = lambda m, n, since: {"manager": m, "name": n, "layer": None, "capability": None, "since": since}
+json.dump({
+    "files": [],
+    "orphans": [
+        {"path": o + "/clean", "sha256": h(b"one\n"), "layer": "base", "since": "2026-01-01"},
+        {"path": o + "/edited", "sha256": h(b"two\n"), "since": "2026-01-02"},
+        {"path": o + "/nosha", "since": "2026-01-03"},
+        {"path": o + "/dir", "sha256": h(b""), "since": "2026-01-04"},
+        {"path": o + "/gone", "sha256": h(b"x"), "since": "2026-01-05"},
+        {"path": o + "/forgotten", "sha256": h(b"a\n"), "since": "2026-01-06"},
+        {"path": o + "/forced", "sha256": h(b"zzz"), "since": "2026-01-07"},
+    ],
+    "packages": [pkg("brew", "keep", None)],
+    "package_orphans": [pkg("brew", "wget", "2026-02-01"), pkg("cask", "appa", "2026-02-02"),
+                        pkg("brew", "notinstalled", "2026-02-03"), pkg("brew", "keep", "2026-02-04")],
+}, open(t + "/state/managed-paths.json", "w"))
+PY
+cat > "$T/bin/brew" <<STUB
+#!/bin/bash
+echo "\$*" >> "$T/brew-calls"
+case "\$1 \$2" in
+    "list --formula") printf 'wget\nkeep\n' ;;
+    "list --cask") printf 'appa\n' ;;
+    "uninstall --formula") [[ -z "\${BREW_REFUSE:-}" ]] || { echo "Error: Refusing to uninstall \$3 because it is required by foo" >&2; exit 1; } ;;
+    "uninstall --cask") echo "askpass=\${SUDO_ASKPASS-} pw=\${TENON_SUDO_PASSWORD-}" >> "$T/brew-env" ;;
+esac
+STUB
+chmod +x "$T/bin/brew"
+oid() { run orphans --json | yq -p json -r '.orphans[] | select(.path == "'"$1"'" or .name == "'"$1"'") | .id'; }
+field() { run orphans --json | yq -p json -r '.orphans[] | select(.path == "'"$1"'" or .name == "'"$1"'") | '"$2"; }
+
+rm -f "$T/brew-calls"
+js="$(run orphans --json)"
+[[ "$(grep -c '^list ' "$T/brew-calls")" == 2 ]] || fail "brew list did not run once per manager: $(cat "$T/brew-calls")"
+[[ "$(yq -p json -r '.schema_version' <<<"$js")" == 1 && "$(yq -p json -r '.orphans | length' <<<"$js")" == 8 ]] || fail "orphans --json shape: $js"
+[[ "$(field "$T/orph/clean" .safe)" == true && "$(field "$T/orph/clean" .layer)" == base ]] || fail "an unchanged file is not safe: $js"
+[[ "$(field "$T/orph/edited" .safe)" == false && "$(field "$T/orph/edited" .reason)" == *modified* ]] || fail "an edited file is safe: $js"
+[[ "$(field "$T/orph/nosha" .safe)" == false && "$(field "$T/orph/nosha" .reason)" == *checksum* ]] || fail "a file with no checksum is safe: $js"
+[[ "$(field wget .safe)" == false && "$(field wget .reason)" == "may have been installed before tenon" && "$(field wget .kind)" == package && "$(field appa .manager)" == cask ]] || fail "package orphans wrong: $js"
+[[ "$(yq -p json -r '[.orphans[] | select(.name == "notinstalled" or .name == "keep" or (.path // "") == "'"$T/orph/gone"'")] | length' <<<"$js")" == 0 ]] || fail "absent, re-desired or gone orphans listed: $js"
+[[ "$(oid "$T/orph/clean")" =~ ^[0-9a-f]{12}$ && "$(oid "$T/orph/clean")" == "$(yq -p json -r '.orphans[] | select(.path == "'"$T/orph/clean"'") | .id' <<<"$js")" ]] || fail "orphan id not stable"
+out="$(run orphans)"
+[[ "$out" == *"$T/orph/clean"* && "$out" == *unsafe* && "$out" == *"brew:wget"* ]] || fail "orphans text: $out"
+[[ "$(run status --json | yq -p json -r '.orphans')" == 11 ]] || fail "status --json orphans is not the stored count: $(run status --json)"
+echo "  ok  orphans: shape, safe/unsafe, packages need installation, stable ids, stored count in status"
+
+clean_id="$(oid "$T/orph/clean")"; edited_id="$(oid "$T/orph/edited")"; nosha_id="$(oid "$T/orph/nosha")"
+dir_id="$(oid "$T/orph/dir")"; wget_id="$(oid wget)"; appa_id="$(oid appa)"; forgotten_id="$(oid "$T/orph/forgotten")"
+forced_id="$(oid "$T/orph/forced")"
+rc=0; run orphans remove "$clean_id" deadbeef >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 64 && -e "$T/orph/clean" ]] || fail "an unknown id did not stop everything (rc=$rc)"
+rc=0; run orphans remove >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 64 ]] || fail "remove without ids exit $rc, want 64"
+mkdir "$T/state/run.lock"; sleep 30 & holder=$!; echo "$holder" > "$T/state/run.lock/pid"
+rc=0; run orphans remove "$clean_id" >/dev/null 2>&1 || rc=$?
+kill "$holder"; wait "$holder" 2>/dev/null || true
+rm -rf "$T/state/run.lock"
+[[ "$rc" == 75 && -e "$T/orph/clean" ]] || fail "a busy remove did not exit 75 untouched (rc=$rc)"
+echo "  ok  orphans remove: unknown id 64 and nothing done, no ids 64, busy 75"
+
+res="$(run orphans remove --json "$clean_id")" || fail "removing a safe file failed: $res"
+[[ "$(yq -p json -r '.results[0].id + " " + (.results[0].ok | tostring)' <<<"$res")" == "$clean_id true" ]] || fail "remove --json: $res"
+[[ ! -e "$T/orph/clean" && "$(cat "$T"/backups/trash/*/"${T#/}"/orph/clean)" == one ]] || fail "the file was not moved into the trash under its own path"
+[[ -z "$(oid "$T/orph/clean")" && "$(yq -p json -r '.orphans | length' "$T/state/managed-paths.json")" == 6 && "$(yq -p json -r '.packages | length' "$T/state/managed-paths.json")" == 1 ]] || fail "removed orphan still listed, or the rest of the manifest changed"
+rc=0; out="$(run orphans remove "$edited_id" "$nosha_id" 2>&1)" || rc=$?
+[[ "$rc" == 1 && -e "$T/orph/edited" && -e "$T/orph/nosha" && "$out" == *"--force"* ]] || fail "unsafe files moved without --force (rc=$rc): $out"
+rc=0; out="$(run orphans remove --force "$dir_id" 2>&1)" || rc=$?
+[[ "$rc" == 1 && -d "$T/orph/dir" && "$out" == *directory* ]] || fail "a directory was removed (rc=$rc): $out"
+rc=0; run orphans remove --force "$edited_id" "$nosha_id" >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 0 && ! -e "$T/orph/edited" && ! -e "$T/orph/nosha" && "$(cat "$T"/backups/trash/*/"${T#/}"/orph/edited)" == changed ]] || fail "--force did not move unsafe files (rc=$rc)"
+echo "  ok  orphans remove: safe file moved to the trash under its path, unsafe needs --force, directories never"
+
+run orphans forget "$forgotten_id" >/dev/null || fail "forget failed"
+[[ -e "$T/orph/forgotten" && -z "$(oid "$T/orph/forgotten")" ]] || fail "forget touched the file or kept the orphan"
+rc=0; run orphans forget deadbeef >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 64 ]] || fail "forget of an unknown id exit $rc, want 64"
+echo "  ok  orphans forget: drops the entry, leaves the file, unknown id 64"
+
+rm -f "$T/brew-calls"
+rc=0; out="$(BREW_REFUSE=1 run orphans remove "$wget_id" 2>&1)" || rc=$?
+[[ "$rc" == 1 && "$out" == *"Refusing to uninstall"* && -n "$(oid wget)" ]] || fail "a brew refusal was not reported per item (rc=$rc): $out"
+run orphans remove "$wget_id" "$appa_id" >/dev/null || fail "package removal failed"
+[[ "$(grep -c '^uninstall' "$T/brew-calls")" == 3 && "$(grep -c '^uninstall --formula wget$' "$T/brew-calls")" == 2 && "$(grep -c '^uninstall --cask appa$' "$T/brew-calls")" == 1 ]] || fail "wrong brew calls: $(cat "$T/brew-calls")"
+[[ "$(cat "$T/brew-calls")" != *--force* && "$(cat "$T/brew-calls")" != *--zap* ]] || fail "brew was forced: $(cat "$T/brew-calls")"
+[[ -z "$(oid wget)" && -z "$(oid appa)" ]] || fail "uninstalled packages still listed"
+rc=0; run orphans remove --force "$forced_id" >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 0 && ! -e "$T/orph/forced" ]] || fail "--force on a modified file failed (rc=$rc)"
+[[ ! -e "$T/state/run.lock" ]] || fail "orphans left the lock behind"
+echo "  ok  orphans remove: brew uninstall per package, refusal reported, no --force/--zap, lock released"
+
+if [[ "$(uname -s)" == Darwin ]]; then
+    "$RT_PY" - "$T" <<'PY'
+import json, sys
+p = sys.argv[1] + "/state/managed-paths.json"
+m = json.load(open(p))
+m["package_orphans"] = [{"manager": "cask", "name": "appa", "layer": None, "capability": None, "since": "x"}]
+json.dump(m, open(p, "w"))
+PY
+    appa_id="$(oid appa)"
+    rm -f "$T/brew-calls" "$T/brew-env" "$T/sudo-calls"
+    rc=0; err="$(printf 'bad\n' | run orphans remove --password-stdin "$appa_id" 2>&1)" || rc=$?
+    [[ "$rc" == 65 && ! -e "$T/brew-calls" ]] || fail "wrong sudo password: rc=$rc $err"
+    printf 'good\n' | run orphans remove --password-stdin "$appa_id" >/dev/null || fail "cask removal with a good password failed"
+    [[ "$(cat "$T/brew-env")" == "askpass=$T/pull/scripts/askpass pw=good" ]] || fail "askpass/password did not reach brew: $(cat "$T/brew-env")"
+else
+    rc=0; run orphans remove --password-stdin x >/dev/null 2>&1 || rc=$?
+    [[ "$rc" == 64 ]] || fail "--password-stdin on Linux exit $rc, want 64"
+fi
+rm -f "$T/state/managed-paths.json" "$T/brew-calls" "$T/brew-env" "$T/bin/brew" "$T/sudo-calls"
+echo "  ok  orphans remove: cask sudo via --password-stdin (65 on a wrong one)"
+
 # 16c. capabilities: merged list, select/deselect keep the rest of machine.yml, unknown ids change nothing.
 mkdir -p "$T/cache"
 cp -R "$ROOT"/tests/fixtures/capabilities/cache/. "$T/cache/"

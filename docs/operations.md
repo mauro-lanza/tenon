@@ -74,7 +74,7 @@ tenon capabilities deselect ID...
 adopted (`adopt_if_present` path exists); `platforms` lists where it installs
 or deploys anything (omitted if nowhere). Unknown ids exit 64 and change
 nothing. Deselecting never uninstalls: software and files stay, and show as
-orphans in `tenon manifest`.
+orphans in `tenon orphans`.
 
 Ask what this system owns:
 
@@ -349,6 +349,7 @@ Everything else in the state directory is internal.
 | `current_run` | `null` when idle, else the object below |
 | `last_success`, `days_since_success`, `stale` | last successful scheduled run (`null`, `null`, `false` if none) |
 | `days_since_upgrade_success` | days since the last scheduled upgrade, `null` if none |
+| `orphans` | count of stored orphans (files + packages), `0` if none; not re-checked against disk or `brew list`, so a package removed by hand counts until the next run |
 | `schedule` | `{"upgrade": "HH:MM", "check": "HH:MM"}`, or `null` |
 | `last_run` | the `last-run.json` contents, `null` if none |
 
@@ -369,6 +370,41 @@ null or `n` has passed it. In the instant between taking the lock and writing
 
 `tenon capabilities --json` carries `"schema_version": 1` beside `capabilities`.
 
+`tenon orphans --json` lists what was once managed and is still present:
+
+```json
+{"schema_version": 1, "orphans": [
+  {"id": "3f2a9c1b7d04", "kind": "file", "manager": null, "path": "/Users/you/.config/old/settings.json",
+   "name": null, "layer": "tenon-layer-public", "capability": null, "since": "2026-11-20T09:00:12+0100",
+   "safe": true, "reason": "unchanged since tenon wrote it"},
+  {"id": "a81c05e2d9f6", "kind": "package", "manager": "cask", "path": null,
+   "name": "appa", "layer": "tenon-layer-personal", "capability": "cap-a", "since": "2026-11-21T09:00:03+0100",
+   "safe": false, "reason": "may have been installed before tenon"}]}
+```
+
+`id` is stable (a hash of kind, manager and path or name). `safe` is true only for
+a file whose bytes still equal the checksum recorded when tenon wrote it; files
+with no recorded checksum and all packages are never safe. `layer` and
+`capability` are `null` where tenon cannot tell (baseline packages have no layer;
+file orphans carry no capability). `tenon orphans` without `--json` prints the
+same list. Packages are listed only while `brew list` still reports them installed.
+
+`tenon orphans remove [--force] [--json] [--password-stdin] ID...` and
+`tenon orphans forget [--json] ID...` print `{"results": [{"id", "ok", "message"}]}`
+under `--json`, one entry per id. They take `run.lock` (busy: 75). An unknown id
+exits 64 and nothing is done. `remove` re-verifies each orphan first:
+
+- a file is moved to `~/.local/share/tenon/backups/trash/<YYYYmmdd-HHMMSS>/<its path>`
+  (restore it by moving it back); a file that is not `safe` is skipped unless
+  `--force`; directories are never removed;
+- a package runs `brew uninstall --formula NAME` or `brew uninstall --cask NAME`,
+  never `--force`, `--zap` or autoremove; a refusal (for example a dependent) is
+  reported on that item. `--password-stdin` (macOS) gives casks that need root the
+  password, as for `upgrade`: 65 if it is wrong, nothing runs.
+
+`forget` drops the entries and touches nothing. Removed and forgotten orphans leave
+the list. Exit 1 if any item was skipped or failed.
+
 Files in `~/.local/state/tenon/` (see [architecture.md](architecture.md)):
 
 - `progress.jsonl`: the live run, truncated by every run. Every line has
@@ -386,10 +422,10 @@ Files in `~/.local/state/tenon/` (see [architecture.md](architecture.md)):
 | Code | Meaning |
 |---|---|
 | 0 | success; also a scheduled run skipped because another run holds the lock or the repo is unreachable |
-| 1 | failure (a failed run returns ansible-pull's code; an unreachable repo, a missing terminal, a missing path) |
-| 64 | usage error: bad arguments, unknown capability id, `apply --check`, a flag the platform does not use |
+| 1 | failure (a failed run returns ansible-pull's code; an unreachable repo, a missing terminal, a missing path; `orphans remove` skipped or failed an item) |
+| 64 | usage error: bad arguments, unknown capability or orphan id, `apply --check`, a flag the platform does not use |
 | 65 | `--password-stdin` got a wrong sudo password; nothing ran |
-| 75 | `apply`, `check` or `upgrade` refused because another run holds `run.lock` (stderr names its pid) |
+| 75 | `apply`, `check`, `upgrade` or `orphans remove|forget` refused because another run holds `run.lock` (stderr names its pid) |
 
 ### Log directory
 

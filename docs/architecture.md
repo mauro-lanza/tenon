@@ -612,13 +612,20 @@ precondition.
 ## Orphans: paths that stopped being managed
 
 Each complete run diffs the previous manifest against its own and records what
-fell out, in `orphans`. `tenon manifest` lists them and `status` says
-how many there are.
+fell out, in `orphans` (files) and `package_orphans` (brew and cask).
+`tenon orphans` lists them with a `safe` verdict and `status` counts them.
 
-**Reported, never removed.** Deciding a file is garbage is a judgement, and the
-evidence is presented so a person can make it. Shipping the report first is
-deliberate: it should be watched being right for a while before anything acts on
-it.
+**Removal only on request, and reversible.** Nothing is removed during `apply`,
+`check` or a scheduled run: `tenon orphans remove ID...` acts only on ids the user
+names. Files are moved to `~/.local/share/tenon/backups/trash/` keeping their
+path (restore = move back); packages go through `brew uninstall`, which refuses
+when something depends on them. A file is `safe` only when it still hashes to the
+SHA-256 recorded right after tenon wrote it (checked at list and at remove time);
+anything else needs `--force`. Packages are never `safe`, since tenon cannot know
+they were not installed before it, and directories are never removed. The desired
+package set is reported by the packages role as a task result and, like the file
+list, recorded only by complete non-check runs; whether an orphaned package is
+still installed is asked of `brew list` when listing, not on every run.
 
 Three properties, each gated:
 

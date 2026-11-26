@@ -244,6 +244,11 @@ tenon — operate this machine's configuration.
   log --list       Every run log kept, newest first.
   status [--json]  What the last run did, and whether syncing has gone stale.
   manifest [--json] Every file and directory this system manages.
+  orphans [--json]  Files and packages no longer managed but still present.
+  orphans remove [--force] [--json] [--password-stdin] ID...
+                   Move orphaned files to the trash / brew-uninstall packages (never during apply).
+  orphans forget [--json] ID...
+                   Stop reporting an orphan; touches nothing.
   history [n]      The last n runs, one line each (default 20).
   progress         What a run is doing right now, if one is running.
   machine <sub>    Back up / restore this machine's declaration (init|push|list|pull).
@@ -284,9 +289,11 @@ state_env() {
     TENON_LOG_FILE="$RUN_LOG"
     TENON_RUN_MODE="$1"
     TENON_RUN_PARTIAL="$2"
+    # Lets the manifest name the layer a deployed file came from.
+    TENON_LAYER_CACHE="$LAYER_CACHE"
     # Keys the history line: the final hook can fire twice, and plays may be
     # separate processes. Minted by start_run_log.
-    export TENON_STATE_FILE TENON_MANIFEST_FILE TENON_HISTORY_FILE TENON_PROGRESS_FILE TENON_LOG_FILE
+    export TENON_STATE_FILE TENON_MANIFEST_FILE TENON_HISTORY_FILE TENON_PROGRESS_FILE TENON_LOG_FILE TENON_LAYER_CACHE
     export TENON_RUN_MODE TENON_RUN_PARTIAL TENON_RUN_ID
 }
 
@@ -562,6 +569,7 @@ cmd_status() {
         printf '  "stale": %s,\n' "$( [[ -n "$days" && "$days" -ge "$STALE_AFTER_DAYS" ]] && echo true || echo false )"
         printf '  "schedule": %s,\n' "$SCHEDULE_JSON"
         printf '  "days_since_upgrade_success": %s,\n' "$(days_since_success "$UPGRADE_SUCCESS_FILE" | grep . || echo null)"
+        printf '  "orphans": %s,\n' "$(orphan_count)"
         printf '  "last_run": '
         if [[ -f "$LAST_RUN_FILE" ]]; then cat "$LAST_RUN_FILE"; else printf 'null\n'; fi
         printf '}\n'
@@ -604,12 +612,12 @@ cmd_status() {
         echo "           Run \`tenon log\` for the detail."
     fi
 
-    # The detail lives in `tenon manifest`; this is the pointer.
+    # The detail lives in `tenon orphans`; this is the pointer.
     local orphan_n
-    orphan_n="$(yq -r '.orphans // [] | length' "$MANIFEST_FILE" 2>/dev/null || true)"
-    if [[ "${orphan_n:-0}" =~ ^[0-9]+$ && "${orphan_n:-0}" -gt 0 ]]; then
-        echo "Orphans:   ${orphan_n} path(s) no longer managed but still on disk"
-        echo "           See \`tenon manifest\`. Nothing is deleted automatically."
+    orphan_n="$(orphan_count)"
+    if [[ "$orphan_n" -gt 0 ]]; then
+        echo "Orphans:   ${orphan_n} file(s) or package(s) no longer managed but still present"
+        echo "           See \`tenon orphans\`. Nothing is removed unless you confirm it."
     fi
 
     # A machine that silently stopped syncing looks healthy until someone checks.
@@ -671,8 +679,73 @@ cmd_manifest() {
         yq -r '.orphans[] | "  " + .path + "\t" + ("was " + (.role // "?")) + "\tsince " + (.since // "?")' \
             "$MANIFEST_FILE" 2>/dev/null | column -t -s $'\t'
         echo
-        echo "  Nothing is deleted automatically. Remove what you recognise."
+        echo "  Nothing is deleted automatically. See \`tenon orphans\` to review and remove."
     fi
+}
+
+# ─── Orphans: once managed, no longer ────────────────────────────────────────
+# Removal happens only here, on an explicit id, never during a run. The logic is
+# in scripts/tenon-orphans; this holds the lock and the sudo password. See
+# "Orphans" in docs/architecture.md.
+ORPHANS_BIN="${BIN_DIR}/tenon-orphans"
+ORPHANS_PY="{{ tenon_runtime_tools }}/ansible-core/bin/python"
+BREW_PREFIX={{ tenon_platform.homebrew_prefix | quote }}
+TRASH_DIR="${BACKUP_REPO_DIR}/trash"
+
+# Stored orphans only: `brew list` is too slow for a command a UI polls.
+orphan_count() {
+    local n
+    n="$(yq -r '(.orphans // [] | length) + (.package_orphans // [] | length)' "$MANIFEST_FILE" 2>/dev/null || true)"
+    if [[ "$n" =~ ^[0-9]+$ ]]; then echo "$n"; else echo 0; fi
+}
+
+cmd_orphans() {
+    local sub=list a pw_stdin=0 n_ids=0
+    local -a ids=() flags=()
+    if [[ $# -gt 0 && "$1" != -* ]]; then sub="$1"; shift; fi
+    case "$sub" in list|remove|forget) ;; *)
+        printf '%s\n' "Usage: tenon orphans [--json] | remove [--force] [--json] [--password-stdin] ID... | forget [--json] ID..." >&2
+        return 64 ;;
+    esac
+    for a in "$@"; do
+        case "$a" in
+            --json) flags+=(--json) ;;
+            --force) [[ "$sub" == remove ]] || { printf '%s\n' "orphans ${sub}: --force applies to remove only" >&2; return 64; }
+                     flags+=(--force) ;;
+            --password-stdin) [[ "$sub" == remove ]] || { printf '%s\n' "orphans ${sub}: --password-stdin applies to remove only" >&2; return 64; }
+                              pw_stdin=1 ;;
+            -*) printf '%s\n' "orphans ${sub}: unknown option '${a}'" >&2; return 64 ;;
+            *) ids+=("$a"); n_ids=$(( n_ids + 1 )) ;;
+        esac
+    done
+    if [[ "$sub" == list ]]; then
+        [[ $n_ids -eq 0 ]] || { printf '%s\n' "orphans: list takes no ids" >&2; return 64; }
+        "$ORPHANS_PY" "$ORPHANS_BIN" list --manifest "$MANIFEST_FILE" --brew-prefix "$BREW_PREFIX" "${flags[@]+"${flags[@]}"}"
+        return $?
+    fi
+    [[ $n_ids -gt 0 ]] || { printf '%s\n' "orphans ${sub}: give at least one id (see \`tenon orphans\`)" >&2; return 64; }
+    local rc
+    require_lock || return $?
+{% if tenon_platform.runner.upgrade_sudo_prompt %}
+    if [[ $pw_stdin -eq 1 ]]; then
+        sudo_password_from_stdin || return $?
+        [[ -z "${TENON_SUDO_PASSWORD:-}" ]] || export SUDO_ASKPASS="${PULL_DIR}/scripts/askpass"
+    fi
+{% else %}
+    if [[ $pw_stdin -eq 1 ]]; then
+        printf '%s\n' "orphans remove: --password-stdin is not used on this platform" >&2
+        return 64
+    fi
+{% endif %}
+    if [[ "$sub" == remove ]]; then
+        "$ORPHANS_PY" "$ORPHANS_BIN" remove --manifest "$MANIFEST_FILE" --brew-prefix "$BREW_PREFIX" \
+            --trash-dir "$TRASH_DIR" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
+    else
+        "$ORPHANS_PY" "$ORPHANS_BIN" forget --manifest "$MANIFEST_FILE" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
+    fi
+    rc=$?
+    unset TENON_SUDO_PASSWORD
+    return "$rc"
 }
 
 # ─── Run history ─────────────────────────────────────────────────────────────
@@ -1050,6 +1123,7 @@ case "$COMMAND" in
     machine)            cmd_machine "$@" ;;
     status)             cmd_status "$@" ;;
     manifest)           cmd_manifest "$@" ;;
+    orphans)            cmd_orphans "$@" ;;
     history)            cmd_history "$@" ;;
     progress)           cmd_progress "$@" ;;
     repos)              cmd_repos "$@" ;;

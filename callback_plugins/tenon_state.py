@@ -5,11 +5,13 @@
 # Every hook is wrapped: reporting must never fail a run.
 from __future__ import absolute_import, division, print_function
 
+import hashlib
 import json
 import os
 import tempfile
 import time
 
+from ansible import context
 from ansible.plugins.callback import CallbackBase
 
 __metaclass__ = type
@@ -77,6 +79,23 @@ WRITE_ACTIONS = frozenset((
     "assemble", "get_url", "unarchive", "ini_file",
 ))
 
+# Package managers whose desired set is recorded for orphan tracking.
+PACKAGE_MANAGERS = ("brew", "cask")
+
+
+def _sha256(path):
+    """Hex digest of a regular file's bytes; None for anything else (symlink, directory, unreadable)."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
 
 class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
@@ -122,6 +141,17 @@ class CallbackModule(CallbackBase):
         self.managed_files = {}
         self.managed_dirs = {}
         self.managed_backups = {}
+        # A --check run never wrote the bytes it sees, so it records no checksums
+        # and no package set (architecture.md, "Orphans").
+        try:
+            self.check_mode = bool(context.CLIARGS.get("check"))
+        except Exception:
+            self.check_mode = False
+        self.check_mode = self.check_mode or self.run_mode == "check"
+        # Lets a manifest entry name the layer a template/copy source came from.
+        self.layer_cache = os.environ.get("TENON_LAYER_CACHE") or ""
+        # Reported by the packages role as a task result; None until it runs.
+        self.desired_packages = None
         # The plugin is constructed as the play starts, so this is the run's
         # start within a second. Recorded because "the 10:00 check now takes
         # four minutes" is a thing worth being able to see, and it cannot be
@@ -235,6 +265,18 @@ class CallbackModule(CallbackBase):
             pass
         return entry
 
+    def _stamp_file(self, entry, dest, src):
+        """Record the checksum of what is on disk right after the write, and the layer `src` came from."""
+        if not self.check_mode:
+            digest = _sha256(dest)
+            if digest:
+                entry["sha256"] = digest
+        prefix = self.layer_cache.rstrip("/") + "/" if self.layer_cache else ""
+        if prefix and isinstance(src, str) and src.startswith(prefix):
+            layer = src[len(prefix):].split("/", 1)[0]
+            if layer:
+                entry["layer"] = layer
+
     def _inventory(self, result):
         """Record every path this run manages, changed or not; skipped tasks stay absent (architecture.md, "The manifest")."""
         if not self.manifest_file:
@@ -255,7 +297,9 @@ class CallbackModule(CallbackBase):
                 if state == "absent":
                     return
                 bucket = self.managed_dirs if state == "directory" else self.managed_files
-                bucket.setdefault(dest, self._manifest_entry(task, dest))
+                entry = bucket.setdefault(dest, self._manifest_entry(task, dest))
+                if bucket is self.managed_files:
+                    self._stamp_file(entry, dest, args.get("src"))
                 # `backup: true` leaves <dest>.<pid>.<date>@<time>~ beside the
                 # file and nothing ever removes it. Ansible names it in the
                 # result, so it is captured here rather than guessed at later
@@ -376,6 +420,9 @@ class CallbackModule(CallbackBase):
             if result._result.get("changed"):
                 self._record(self.changed, result)
             self._inventory(result)
+            facts = result._result.get("ansible_facts")
+            if isinstance(facts, dict) and "tenon_desired_packages" in facts:
+                self.desired_packages = self._valid_packages(facts["tenon_desired_packages"])
         except Exception:
             pass
 
@@ -487,10 +534,49 @@ class CallbackModule(CallbackBase):
             "backups": sorted(self.managed_backups.values(), key=lambda e: e["path"]),
             "orphans": self._orphans(previous, files),
         }
+        # A check run, or one where the packages role never ran, keeps what the
+        # last real run recorded.
+        if self.desired_packages is not None and not self.check_mode:
+            payload["packages"] = self.desired_packages
+            payload["package_orphans"] = self._package_orphans(previous, self.desired_packages)
+        else:
+            for key in ("packages", "package_orphans"):
+                if isinstance(previous.get(key), list):
+                    payload[key] = previous[key]
+        if self.check_mode:
+            recorded = {e.get("path"): e for e in previous.get("files", []) if isinstance(e, dict)}
+            for entry in files:
+                digest = (recorded.get(entry["path"]) or {}).get("sha256")
+                if digest:
+                    entry["sha256"] = digest
         self._write(self.manifest_file, payload)
 
+    def _valid_packages(self, value):
+        """The reported package set, minus anything that is not a {manager, name} mapping of a tracked manager."""
+        out = []
+        for item in value if isinstance(value, list) else []:
+            if (isinstance(item, dict) and item.get("manager") in PACKAGE_MANAGERS
+                    and isinstance(item.get("name"), str) and item["name"]):
+                out.append({"manager": item["manager"], "name": item["name"],
+                            "layer": item.get("layer"), "capability": item.get("capability")})
+        return sorted(out, key=lambda e: (e["manager"], e["name"]))
+
+    def _package_orphans(self, previous, desired):
+        """Packages once desired and no longer, carried forward like file orphans (architecture.md, "Orphans")."""
+        current = {(e["manager"], e["name"]) for e in desired}
+        candidates = {}
+        for key in ("packages", "package_orphans"):
+            for entry in previous.get(key) if isinstance(previous.get(key), list) else []:
+                valid = self._valid_packages([entry])
+                if not valid or (valid[0]["manager"], valid[0]["name"]) in current:
+                    continue
+                record = valid[0]
+                record["since"] = entry.get("since") or time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                candidates[(record["manager"], record["name"])] = record
+        return [candidates[k] for k in sorted(candidates)]
+
     def _orphans(self, previous, files):
-        """Paths once managed, still on disk, no longer written; reported only, carried forward (architecture.md, "Orphans")."""
+        """Paths once managed, still on disk, no longer written; carried forward (architecture.md, "Orphans")."""
         current = {entry["path"] for entry in files}
         # Anything the previous run listed as managed, including its own
         # orphans: a path stays reported until it is gone or is managed again.
@@ -518,7 +604,7 @@ class CallbackModule(CallbackBase):
             record = {"path": path}
             # Kept from when it WAS managed: "which role used to own this" is
             # the question someone asks when deciding whether to delete it.
-            for key in ("role", "task", "action"):
+            for key in ("role", "task", "action", "sha256", "layer", "capability"):
                 if entry.get(key):
                     record[key] = entry[key]
             # Preserved across runs so the report can say how long it has been

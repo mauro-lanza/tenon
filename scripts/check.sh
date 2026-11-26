@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+shopt -s extglob
+
 # Section names, in run order. Each is a function of the same name with `-`
 # turned into `_`, defined below.
 SECTIONS=(shellcheck bootstrap templates syntax contract machine run-state
@@ -177,7 +179,7 @@ if ! command -v shellcheck >/dev/null 2>&1; then
     echo "       (it is also the 'shellcheck' capability in the public layer)" >&2
     exit 1
 fi
-shellcheck -S style -x bootstrap.sh scripts/* tests/*.sh
+shellcheck -S style -x bootstrap.sh scripts/!(tenon-orphans) tests/*.sh
 echo "  ok  no findings"
 }
 
@@ -270,6 +272,7 @@ PY
 # which is the one that will actually import it.
 echo "==> Callback plugin"
 "$TENON_PY" -m py_compile callback_plugins/tenon_state.py
+"$TENON_PY" -c 'import ast; ast.parse(open("scripts/tenon-orphans").read())'
 "$TENON_PY" - <<'PY'
 import sys
 sys.path.insert(0, "callback_plugins")
@@ -515,12 +518,12 @@ section_manifest() {
 echo "==> Manifest contract"
 cs_mdir="$(mktemp -d "$TENON_TMP/manifest.XXXXXX")"
 cs_mscratch="$cs_mdir/scratch"
-cs_run apply 0 contract-1 TENON_MANIFEST_FILE="$cs_mdir/managed-paths.json" \
+cs_run apply 0 contract-1 TENON_MANIFEST_FILE="$cs_mdir/managed-paths.json" TENON_LAYER_CACHE="$PWD/tests/fixtures/layers_cache" \
     TENON_HISTORY_FILE="$cs_mdir/history.jsonl" tests/manifest.yml -e "m=$cs_mscratch"
 # A second run with the SAME run id: ansible-pull can reach the callback's final
 # hook more than once per invocation, and history is appended, so without a key
 # one run would leave two lines.
-cs_run apply 0 contract-1 TENON_MANIFEST_FILE="$cs_mdir/managed-paths.json" \
+cs_run apply 0 contract-1 TENON_MANIFEST_FILE="$cs_mdir/managed-paths.json" TENON_LAYER_CACHE="$PWD/tests/fixtures/layers_cache" \
     TENON_HISTORY_FILE="$cs_mdir/history.jsonl" tests/manifest.yml -e "m=$cs_mscratch"
 # A third, with a new id and narrowed — the shape of a `--tags` run.
 cs_run check 1 contract-2 TENON_MANIFEST_FILE="$cs_mdir/managed-paths.json" \
@@ -551,6 +554,15 @@ assert f"{base}/removed.conf" not in files | dirs, "a `state: absent` path enter
 # A skipped task no longer manages its path — that is the signal collection
 # needs, so it must NOT appear.
 assert f"{base}/skipped.conf" not in files, "a skipped task's path entered the manifest"
+
+# The checksum is of the bytes on disk after the last write (v2, not v1), and a
+# source under the layer cache names its layer.
+import hashlib
+by_path = {e["path"]: e for e in m["files"]}
+disk = hashlib.sha256(open(f"{base}/managed.conf", "rb").read()).hexdigest()
+assert by_path[f"{base}/managed.conf"]["sha256"] == disk, by_path[f"{base}/managed.conf"]
+assert by_path[f"{base}/layered.conf"]["layer"] == "base", by_path[f"{base}/layered.conf"]
+assert "layer" not in by_path[f"{base}/managed.conf"], "a file with no layer source named one"
 
 # The known blind spot, asserted so it stays known rather than being rediscovered.
 assert f"{base}/invisible.txt" not in files, "command side effects are not knowable here"
@@ -603,6 +615,8 @@ base = os.path.join(d, "scratch")
 for expected in (f"{base}/abs-a.conf", f"{base}/abs-b.conf"):
     assert expected in files, f"{expected} missing from a check-mode manifest: {sorted(files)}"
 assert f"{base}/managed.conf" in files, sorted(files)
+# A check run wrote nothing, so it has no bytes to checksum.
+assert all("sha256" not in e for e in m["files"]), "a check run recorded checksums"
 print("  ok  a fresh machine's manifest includes loop-created files")
 PYEOF
 
@@ -641,6 +655,10 @@ assert base not in orphans, "a directory was reported as an orphan"
 # Attribution survives the file falling out of management — "which role used to
 # own this" is what someone asks when deciding whether to delete it.
 assert orphans[f"{base}/looped-a.conf"].get("since"), "an orphan carries no `since`"
+# What tenon last wrote travels with the orphan: it is what `safe` is judged by.
+import hashlib
+assert orphans[f"{base}/looped-a.conf"]["sha256"] == hashlib.sha256(b"x\n").hexdigest(), orphans[f"{base}/looped-a.conf"]
+assert orphans[f"{base}/layered.conf"]["layer"] == "base", orphans[f"{base}/layered.conf"]
 print("  ok  orphans found, carried across runs, and not invented")
 PYEOF
 
@@ -673,6 +691,47 @@ assert isinstance(m, dict) and m["files"], \
 PYEOF
 done
 echo "  ok  a malformed previous manifest does not stop the next one being written"
+
+# Packages: the desired brew/cask set is recorded by complete real runs only, and
+# what drops out is carried forward. A partial, check or failed run must neither
+# create orphans nor erase the last complete record.
+cs_pdir2="$(mktemp -d "$TENON_TMP/pkgs.XXXXXX")"
+cs_pk() { # ID PARTIAL PACKAGES_JSON [extra ansible args]
+    local id="$1" partial="$2" pk="$3"
+    shift 3
+    cs_run apply "$partial" "$id" ANSIBLE_ROLES_PATH="$PWD/roles" TENON_MANIFEST_FILE="$cs_pdir2/managed-paths.json" \
+        tests/packages-record.yml -e "m=$cs_pdir2/scratch" -e "{\"tenon_packages\": $pk}" "$@"
+}
+cs_pk pk-1 0 '{"brew": ["jq", "wget"], "cask": ["appa"]}'
+cs_pk pk-2 0 '{"brew": ["jq"], "cask": []}'
+cs_py "$cs_pdir2" <<'PYEOF'
+m = load("managed-paths.json")
+want = [
+    {"manager": "brew", "name": "jq", "layer": "lay", "capability": "cap-a"},
+]
+assert m["packages"] == want, m["packages"]
+# Baseline names have no capability; the orphans keep the attribution they had.
+assert [(o["manager"], o["name"], o["layer"], o["capability"]) for o in m["package_orphans"]] == \
+    [("brew", "wget", None, None), ("cask", "appa", "lay", "cap-a")], m["package_orphans"]
+assert all(o["since"] for o in m["package_orphans"]), m["package_orphans"]
+PYEOF
+cs_pk pk-3 1 '{"brew": [], "cask": []}'
+cs_pk pk-4 0 '{"brew": [], "cask": []}' --check
+if cs_pk pk-5 0 '{"brew": [], "cask": []}' -e fail_after=true >/dev/null 2>&1; then
+    echo "ERROR: tests/packages-record.yml was expected to fail and did not" >&2
+    exit 1
+fi
+cs_py "$cs_pdir2" <<'PYEOF'
+m = load("managed-paths.json")
+assert [p["name"] for p in m["packages"]] == ["jq"], f"a partial, check or failed run changed the record: {m['packages']}"
+assert [o["name"] for o in m["package_orphans"]] == ["wget", "appa"], m["package_orphans"]
+PYEOF
+cs_pk pk-6 0 '{"brew": ["jq", "wget"], "cask": []}'
+cs_py "$cs_pdir2" <<'PYEOF'
+m = load("managed-paths.json")
+assert [o["name"] for o in m["package_orphans"]] == ["appa"], f"a re-desired package stayed an orphan: {m['package_orphans']}"
+print("  ok  package set recorded, orphans carried, unchanged by partial/check/failed runs, cleared when desired again")
+PYEOF
 }
 
 # A progress file is only useful if a reader can distinguish "running" from

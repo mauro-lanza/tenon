@@ -1,0 +1,30 @@
+---
+# Reported to the run-state callback as a task result, which keeps it out of
+# the manifest unless the run is complete (architecture.md, "Orphans").
+# A name declared by both the baseline and a capability is attributed to the
+# capability; baseline names have no layer, since layer vars are merged.
+- name: Record the desired brew and cask packages
+  ansible.builtin.set_fact:
+    tenon_desired_packages: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for m in ['brew', 'cask'] if m in tenon_package_managers -%}
+        {%- for n in tenon_packages.get(m, []) -%}
+          {%- set owner = _owners | selectattr('manager', 'eq', m) | selectattr('name', 'eq', n) | list | first | default({}, true) -%}
+          {%- set ns.out = ns.out + [{'manager': m, 'name': n, 'layer': owner.get('layer'), 'capability': owner.get('capability')}] -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.out }}
+  vars:
+    _owners: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for e in (selected_capabilities | default([], true))
+                   | select('in', tenon_capability_registry)
+                   | map('extract', tenon_capability_registry)
+                   | selectattr('packages', 'defined') -%}
+        {%- for m, names in e.packages.items() -%}
+          {%- for n in names | split -%}
+            {%- set ns.out = ns.out + [{'manager': m, 'name': n, 'layer': e.layer | default(none), 'capability': e.id}] -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.out }}

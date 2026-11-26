@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""List, remove and forget the orphans recorded in the manifest (docs/architecture.md, "Orphans").
+
+    tenon-orphans list   --manifest FILE --brew-prefix DIR [--json]
+    tenon-orphans remove --manifest FILE --brew-prefix DIR --trash-dir DIR [--force] [--json] ID...
+    tenon-orphans forget --manifest FILE [--json] ID...
+
+Run by `tenon orphans`, which holds the run lock for remove and forget.
+Exit codes: 0 done, 1 something skipped or failed, 64 unknown id or bad usage.
+"""
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+SCHEMA_VERSION = 1
+EXIT_FAILED = 1
+EXIT_USAGE = 64
+PACKAGE_REASON = "may have been installed before tenon"
+BREW_FLAGS = {"brew": "--formula", "cask": "--cask"}
+
+
+def sha256(path):
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def orphan_id(kind, manager, key):
+    return hashlib.sha256(f"{kind}\0{manager or ''}\0{key}".encode()).hexdigest()[:12]
+
+
+def load_manifest(path):
+    try:
+        with open(path) as stream:
+            loaded = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def write_manifest(path, manifest):
+    directory = os.path.dirname(path) or "."
+    handle, tmp_path = tempfile.mkstemp(dir=directory, prefix=".state-")
+    try:
+        with os.fdopen(handle, "w") as stream:
+            json.dump(manifest, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
+
+
+def dict_entries(manifest, key):
+    value = manifest.get(key)
+    return [e for e in value if isinstance(e, dict)] if isinstance(value, list) else []
+
+
+def short_name(name):
+    return name.rsplit("/", 1)[-1]
+
+
+def brew_env(brew_prefix):
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(filter(None, [env.get("PATH"), os.path.join(brew_prefix, "bin")]))
+    return env
+
+
+def installed_names(manager, brew_prefix):
+    """Short names `brew list` reports for a manager, or None when brew cannot say."""
+    try:
+        done = subprocess.run(["brew", "list", BREW_FLAGS[manager], "--full-name", "-1"],
+                              env=brew_env(brew_prefix), capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return {short_name(line.strip()) for line in done.stdout.splitlines() if line.strip()}
+
+
+def file_safety(path, recorded):
+    """(safe, reason): safe only when the bytes still equal what tenon last wrote."""
+    if not recorded:
+        return False, "no checksum was recorded when tenon last wrote it"
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False, "not a regular file"
+    if sha256(path) != recorded:
+        return False, "modified since tenon wrote it"
+    return True, "unchanged since tenon wrote it"
+
+
+def collect(manifest, brew_prefix):
+    """Every orphan still present, keyed by id; package orphans need `brew list` once per manager."""
+    found = {}
+    for entry in dict_entries(manifest, "orphans"):
+        path = entry.get("path")
+        if not isinstance(path, str) or not os.path.lexists(path):
+            continue
+        safe, reason = file_safety(path, entry.get("sha256"))
+        found[orphan_id("file", None, path)] = {
+            "kind": "file", "manager": None, "path": path, "name": None,
+            "layer": entry.get("layer"), "capability": entry.get("capability"),
+            "since": entry.get("since"), "safe": safe, "reason": reason,
+        }
+    desired = {(e.get("manager"), e.get("name")) for e in dict_entries(manifest, "packages")}
+    stored = [e for e in dict_entries(manifest, "package_orphans")
+              if e.get("manager") in BREW_FLAGS and isinstance(e.get("name"), str)
+              and (e["manager"], e["name"]) not in desired]
+    installed = {m: installed_names(m, brew_prefix) for m in {e["manager"] for e in stored}}
+    for entry in stored:
+        names = installed[entry["manager"]]
+        if names is None or short_name(entry["name"]) not in names:
+            continue
+        found[orphan_id("package", entry["manager"], entry["name"])] = {
+            "kind": "package", "manager": entry["manager"], "path": None, "name": entry["name"],
+            "layer": entry.get("layer"), "capability": entry.get("capability"),
+            "since": entry.get("since"), "safe": False, "reason": PACKAGE_REASON,
+        }
+    return found
+
+
+def sorted_orphans(found):
+    return sorted(found.items(), key=lambda kv: (kv[1]["kind"], kv[1]["manager"] or "", kv[1]["path"] or kv[1]["name"]))
+
+
+def drop(manifest, ids):
+    """The manifest without the orphans whose ids are given (both stored lists)."""
+    manifest["orphans"] = [e for e in dict_entries(manifest, "orphans")
+                           if orphan_id("file", None, e.get("path")) not in ids]
+    manifest["package_orphans"] = [e for e in dict_entries(manifest, "package_orphans")
+                                   if orphan_id("package", e.get("manager"), e.get("name")) not in ids]
+
+
+def emit_results(results, as_json):
+    if as_json:
+        print(json.dumps({"results": results}))
+    else:
+        for r in results:
+            print(("ok     " if r["ok"] else "FAILED ") + r["id"] + "  " + r["message"])
+
+
+def cmd_list(args):
+    found = collect(load_manifest(args.manifest), args.brew_prefix)
+    rows = [{"id": i, **o} for i, o in sorted_orphans(found)]
+    if args.json:
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "orphans": rows}))
+        return 0
+    if not rows:
+        print("No orphans.")
+        return 0
+    for r in rows:
+        what = r["path"] if r["kind"] == "file" else f"{r['manager']}:{r['name']}"
+        owner = "/".join(x for x in (r["layer"], r["capability"]) if x) or "?"
+        print(f"{r['id']}  {'safe  ' if r['safe'] else 'unsafe'}  {what}")
+        print(f"              was {owner}, since {r['since'] or '?'}: {r['reason']}")
+    return 0
+
+
+def known_or_exit(found, ids):
+    unknown = [i for i in ids if i not in found]
+    if unknown:
+        print("tenon orphans: unknown id(s), nothing was done: " + " ".join(unknown), file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+
+
+def remove_file(path, recorded, force, trash_root):
+    safe, reason = file_safety(path, recorded)
+    if os.path.isdir(path) and not os.path.islink(path):
+        return False, "is a directory; directories are never removed"
+    if not safe and not force:
+        return False, f"skipped: {reason}; use --force to move it anyway"
+    target = os.path.join(trash_root, path.lstrip("/"))
+    os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+    shutil.move(path, target)
+    return True, f"moved to {target}"
+
+
+def remove_package(manager, name, brew_prefix):
+    done = subprocess.run(["brew", "uninstall", BREW_FLAGS[manager], name], env=brew_env(brew_prefix),
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if done.returncode == 0:
+        return True, f"uninstalled {manager} {name}"
+    lines = [l.strip() for l in (done.stderr + done.stdout).splitlines() if l.strip()]
+    return False, (lines[-1] if lines else f"brew exited {done.returncode}")
+
+
+def cmd_remove(args):
+    manifest = load_manifest(args.manifest)
+    found = collect(manifest, args.brew_prefix)
+    known_or_exit(found, args.ids)
+    trash_root = os.path.join(args.trash_dir, time.strftime("%Y%m%d-%H%M%S"))
+    results, handled = [], set()
+    for oid in dict.fromkeys(args.ids):
+        orphan = found[oid]
+        try:
+            if orphan["kind"] == "file":
+                recorded = next((e.get("sha256") for e in dict_entries(manifest, "orphans")
+                                 if e.get("path") == orphan["path"]), None)
+                ok, message = remove_file(orphan["path"], recorded, args.force, trash_root)
+            else:
+                ok, message = remove_package(orphan["manager"], orphan["name"], args.brew_prefix)
+        except (OSError, subprocess.SubprocessError) as error:
+            ok, message = False, str(error)
+        if ok:
+            handled.add(oid)
+        results.append({"id": oid, "ok": ok, "message": message})
+    if handled:
+        drop(manifest, handled)
+        write_manifest(args.manifest, manifest)
+    emit_results(results, args.json)
+    return 0 if all(r["ok"] for r in results) else EXIT_FAILED
+
+
+def cmd_forget(args):
+    manifest = load_manifest(args.manifest)
+    stored = {}
+    for e in dict_entries(manifest, "orphans"):
+        stored[orphan_id("file", None, e.get("path"))] = e.get("path")
+    for e in dict_entries(manifest, "package_orphans"):
+        stored[orphan_id("package", e.get("manager"), e.get("name"))] = e.get("name")
+    known_or_exit(stored, args.ids)
+    ids = set(args.ids)
+    drop(manifest, ids)
+    write_manifest(args.manifest, manifest)
+    emit_results([{"id": i, "ok": True, "message": "forgotten; nothing was touched"}
+                  for i in dict.fromkeys(args.ids)], args.json)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="tenon-orphans")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, handler in (("list", cmd_list), ("remove", cmd_remove), ("forget", cmd_forget)):
+        p = sub.add_parser(name)
+        p.set_defaults(handler=handler)
+        p.add_argument("--manifest", required=True)
+        p.add_argument("--json", action="store_true")
+        if name != "forget":
+            p.add_argument("--brew-prefix", required=True)
+        if name == "remove":
+            p.add_argument("--trash-dir", required=True)
+            p.add_argument("--force", action="store_true")
+        if name != "list":
+            p.add_argument("ids", nargs="+")
+    args = parser.parse_args()
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

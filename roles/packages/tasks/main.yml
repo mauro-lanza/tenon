@@ -38,3 +38,6 @@
   when: >-
     (tenon_packages.get(_pkg_mgr, []) | length > 0)
     or (_pkg_mgr == 'brew' and tenon_packages.get('cask', []) | length > 0)
+
+- name: Record the desired packages for orphan tracking
+  ansible.builtin.include_tasks: record.yml

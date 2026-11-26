@@ -1,0 +1,32 @@
+---
+# Drives the packages role's record step through the manifest callback. The
+# desired set comes in as `tenon_packages` (-e JSON), the way core resolves it.
+- name: Record the desired packages
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    tenon_package_managers: [brew, cask]
+    selected_capabilities: [cap-a]
+    tenon_capability_registry:
+      cap-a:
+        id: cap-a
+        layer: lay
+        packages: {brew: "jq", cask: "appa"}
+    fail_after: false
+  tasks:
+    - name: A managed directory, so the manifest has something to say
+      ansible.builtin.file:
+        path: "{{ m }}"
+        state: directory
+        mode: "0755"
+
+    - name: Record
+      ansible.builtin.include_role:
+        name: packages
+        tasks_from: record
+
+    - name: Fail the run
+      ansible.builtin.fail:
+        msg: expected failure
+      when: fail_after | bool

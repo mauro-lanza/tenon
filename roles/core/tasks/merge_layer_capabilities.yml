@@ -40,6 +40,8 @@
       {{ tenon_capability_registry
          | combine(dict((_caps | map(attribute='id')) | zip(_caps))) }}
   vars:
-    # `default([], true)` (not `default([])`) so an explicit null is replaced too.
-    _caps: "{{ _incoming_capabilities.capabilities | default([], true) }}"
+    # Registry entries carry their layer so package and file orphans can name it.
+    _caps: >-
+      {{ _incoming_capabilities.capabilities | default([], true)
+         | map('combine', {'layer': _layer.name}) | list }}
   when: _layer_capabilities_stat.stat.exists

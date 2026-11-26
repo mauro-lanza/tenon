@@ -18,8 +18,8 @@
     state: directory
     mode: "0700"
 
-# Both helpers exist as standalone scripts because bootstrap.sh needs them on a
-# machine where the runner has not been deployed yet.
+# Standalone helpers: bootstrap.sh needs the first two before the runner exists;
+# tenon-orphans is deployed with them so the runner finds all three in one place.
 - name: Deploy the standalone helpers
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/scripts/{{ item }}"
@@ -28,6 +28,7 @@
   loop:
     - tenon-layers
     - tenon-machine
+    - tenon-orphans
 
 # No handler notification: launchd re-reads the PROGRAM at each scheduled fire,
 # so a rewritten runner needs no reload. Only a changed plist does, and
