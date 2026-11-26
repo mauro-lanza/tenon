@@ -588,9 +588,8 @@ order_capabilities_by_requires() {
 # Merged capabilities. Columns:
 #   id  desc  requires  adopt_if_present
 # `id` is the capability token written to ~/.config/tenon/machine.yml as a selection.
-# Packages are not read for apply (the engine derives them from the registry), only to hide
-# what this platform's managers (from its profile) cannot install; see "Platforms and package
-# managers" in docs/architecture.md. Hidden ids land in UNOFFERABLE_CAPS.
+# Which ids this platform cannot offer is decided by `tenon-layers capabilities list`
+# (see "Capability platforms" in docs/architecture.md); hidden ids land in UNOFFERABLE_CAPS.
 load_capabilities() {
     MERGED_CAPABILITIES_FILE="$(mktemp)"
     UNOFFERABLE_CAPS=" "
@@ -600,29 +599,24 @@ load_capabilities() {
         return 0
     fi
 
-    # Offerability is decided per merged row, after the highest-priority
-    # definition won, so a lower layer's variant cannot resurface.
-    local profile managers offerable
-    profile="$(fetch_repo_file "roles/core/vars/platform/${TENON_OS}.yml")" || exit 1
-    managers="$(yq -r '.tenon_platform.package_managers | keys | .[]' "$profile")" || {
-        error "Cannot read package managers from the platform profile roles/core/vars/platform/${TENON_OS}.yml"
+    local registry
+    registry="$(run_repo_script scripts/tenon-layers capabilities list \
+        --manifest "$MACHINE_FILE" --cache "$LAYER_CACHE" --platform "$TENON_OS")" || {
+        error "Cannot read the capability registry (see the message above)."
         exit 1
     }
-    [[ -n "$SCRIPT_DIR" && "$profile" == "$SCRIPT_DIR/"* ]] || rm -f "$profile"
-    offerable="((.packages // {}) | length) == 0"
-    local m
-    for m in $managers; do offerable="$offerable or .packages.${m} != null"; done
+    UNOFFERABLE_CAPS=" $(printf '%s' "$registry" \
+        | yq -p json -r '.capabilities[] | select(.offerable | not) | .id' | tr '\n' ' ')"
 
     merge_layer_file capabilities.yml \
-        ".capabilities[]? | [.id, .desc, (.requires // \"\"), (.adopt_if_present // \"\"),
-                             (if $offerable then \"y\" else \"n\" end)] | @tsv" \
+        '.capabilities[]? | [.id, .desc, (.requires // ""), (.adopt_if_present // "")] | @tsv' \
         "$MERGED_CAPABILITIES_FILE"
 
-    UNOFFERABLE_CAPS=" $(awk -F"$FS_U" '$5 == "n" { printf "%s ", $1 }' "$MERGED_CAPABILITIES_FILE")"
     local filtered
     filtered="$(mktemp)"
-    awk -F"$FS_U" -v OFS="$FS_U" '$5 == "y" { print $1, $2, $3, $4 }' \
-        "$MERGED_CAPABILITIES_FILE" > "$filtered" && mv "$filtered" "$MERGED_CAPABILITIES_FILE"
+    awk -F"$FS_U" -v OFS="$FS_U" -v hidden="$UNOFFERABLE_CAPS" \
+        'index(hidden, " " $1 " ") == 0' "$MERGED_CAPABILITIES_FILE" > "$filtered" \
+        && mv "$filtered" "$MERGED_CAPABILITIES_FILE"
 
     order_capabilities_by_requires "$MERGED_CAPABILITIES_FILE"
 
@@ -686,15 +680,22 @@ load_presets() {
                          | map(.key + "=" + (.value | tostring)) | join(","))] | @tsv' \
         "$MERGED_PRESETS_FILE"
     # Pre-ticking must not name what the menu hides.
-    local trimmed
+    local trimmed dropped
     trimmed="$(mktemp)"
-    awk -F"$FS_U" -v OFS="$FS_U" -v hidden="${UNOFFERABLE_CAPS:- }" '
+    dropped="$(mktemp)"
+    awk -F"$FS_U" -v OFS="$FS_U" -v hidden="${UNOFFERABLE_CAPS:- }" -v dropped="$dropped" '
         {
             n = split($3, caps, ","); out = ""
-            for (i = 1; i <= n; i++)
+            for (i = 1; i <= n; i++) {
                 if (index(hidden, " " caps[i] " ") == 0) out = out (out == "" ? "" : ",") caps[i]
+                else print caps[i] > dropped
+            }
             $3 = out; print
         }' "$MERGED_PRESETS_FILE" > "$trimmed" && mv "$trimmed" "$MERGED_PRESETS_FILE"
+    if [[ -s "$dropped" ]]; then
+        info "Presets leave out what ${TENON_OS} cannot offer: $(sort -u "$dropped" | tr '\n' ' ')"
+    fi
+    rm -f "$dropped"
     return 0
 }
 

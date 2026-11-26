@@ -1109,7 +1109,7 @@ cmd_capabilities() {
             return 64 ;;
     esac
     "$LAYER_SYNC" capabilities "$sub" --manifest "$MACHINE_FILE" --cache "$LAYER_CACHE" \
-        --homebrew-prefix {{ tenon_platform.homebrew_prefix | quote }} "$@"
+        --homebrew-prefix {{ tenon_platform.homebrew_prefix | quote }} --platform {{ tenon_platform.name | quote }} "$@"
 }
 
 # ─── Dispatch ────────────────────────────────────────────────────────────────

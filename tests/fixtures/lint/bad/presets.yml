@@ -1,5 +1,5 @@
 presets:
   - id: p
     desc: "preset"
-    capabilities: [dup, does-not-exist]
+    capabilities: [dup, does-not-exist, deadreq]
     answers: {q1: a, no-such-question: x}

@@ -369,29 +369,37 @@
   vars:
     _baseline: "{{ packages_baseline | default({}, true) }}"
 
-- name: Find selected capabilities with no package for this machine's managers
-  # A brew-only capability selected on Linux (or the reverse) installs nothing; say so rather than pass silently.
+- name: Ask which capabilities this platform can offer
+  # The registry's `offerable` is the one derivation of where a capability applies (docs/architecture.md, "Capability platforms").
+  ansible.builtin.command:
+    argv:
+      - "{{ role_path }}/../../scripts/tenon-layers"
+      - capabilities
+      - list
+      - --manifest
+      - "{{ tenon_machine_file }}"
+      - --cache
+      - "{{ tenon_layer_cache }}"
+      - --platform
+      - "{{ tenon_platform.name }}"
+  register: _capability_listing
+  changed_when: false
+  check_mode: false
+
+- name: Find selected capabilities this platform cannot offer
+  # Selecting one is still allowed here (machine.yml may be shared or hand-edited); it only warns.
   ansible.builtin.set_fact:
-    tenon_uninstallable_selections: >-
-      {%- set ns = namespace(ids=[]) -%}
-      {%- for e in _entries -%}
-        {%- if not (e.packages.keys() | list | intersect(tenon_package_managers)) -%}
-          {%- set ns.ids = ns.ids + [e.id] -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ ns.ids }}
-  vars:
-    _entries: >-
-      {{ selected_capabilities | default([], true)
-         | select('in', tenon_capability_registry)
-         | map('extract', tenon_capability_registry)
-         | selectattr('packages', 'defined') | list }}
+    tenon_unofferable_selections: >-
+      {{ (_capability_listing.stdout | from_json).capabilities
+         | rejectattr('offerable') | map(attribute='id')
+         | select('in', selected_capabilities | default([], true)) | list }}
 
 - name: Warn about them
   ansible.builtin.debug:
     msg: >-
-      Selected capability id(s) declare no package for any package manager on
-      this machine ({{ tenon_package_managers | join(', ') or 'none detected' }}),
-      so nothing is installed for them: {{ tenon_uninstallable_selections | join(', ') }}.
-      Their config still deploys.
-  when: tenon_uninstallable_selections | length > 0
+      Selected capability id(s) cannot be offered on {{ tenon_platform.name }}
+      (their platforms or a requirement's exclude it), so their packages are
+      not installed: {{ tenon_unofferable_selections | join(', ') }}.
+      Config entries for this platform still deploy.
+      `tenon capabilities --json` shows each one's platforms.
+  when: tenon_unofferable_selections | length > 0

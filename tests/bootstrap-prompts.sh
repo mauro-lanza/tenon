@@ -272,7 +272,7 @@ offered_on() {
     )
 }
 assert_eq "Linux keeps config-only, pacman and flatpak items; hides brew/cask-only" \
-    "dbt vscode-peacock ripgrep pacman-only|nvm vscode opencode zed adopted" "$(offered_on Linux)"
+    "dbt vscode-peacock ripgrep pacman-only|adopted nvm opencode vscode zed" "$(offered_on Linux)"
 assert_eq "Darwin hides pacman-only" \
     "nvm vscode dbt vscode-peacock ripgrep opencode zed adopted|pacman-only" "$(offered_on Darwin)"
 
@@ -319,7 +319,23 @@ printf -- 'layers:\n  - {name: lay, repo: r, priority: 10}\n' > "$WORK/filter-ma
 assert_eq "Linux offers the config-only and AUR capabilities of a layer" \
     "cfg paru-app cask|caskapp" "$(offered_on Linux "$FILTER_CACHE" "$WORK/filter-machine.yml")"
 assert_eq "Darwin offers the cask one and the config-only one" \
-    "caskapp cfg|paru-app cask" "$(offered_on Darwin "$FILTER_CACHE" "$WORK/filter-machine.yml")"
+    "caskapp cfg|cask paru-app" "$(offered_on Darwin "$FILTER_CACHE" "$WORK/filter-machine.yml")"
+
+# `platforms:` overrides derivation, a platform-scoped config entry narrows a
+# config-only capability, and a requirement's platforms narrow its dependents.
+CLOSURE_CACHE="$WORK/closure-cache"
+mkdir -p "$CLOSURE_CACHE/lay"
+cat > "$CLOSURE_CACHE/lay/capabilities.yml" <<'YML'
+capabilities:
+  - {id: cask-app, desc: "Cask", packages: {cask: x}}
+  - {id: child, desc: "Child", packages: {uv: y}, requires: cask-app}
+  - {id: explicit, desc: "Explicit", platforms: [Linux], packages: {brew: z}}
+  - {id: darwin-cfg, desc: "Darwin config", config: [{src: a, dest: /tmp/a, platform: Darwin}]}
+YML
+assert_eq "Darwin: a dependent follows its requirement; explicit platforms: Linux is hidden" \
+    "cask-app child darwin-cfg|explicit" "$(offered_on Darwin "$CLOSURE_CACHE" "$WORK/filter-machine.yml")"
+assert_eq "Linux: only the explicit one; the dependent follows its requirement out" \
+    "explicit|cask-app child darwin-cfg" "$(offered_on Linux "$CLOSURE_CACHE" "$WORK/filter-machine.yml")"
 # Hidden `cask` is a prefix of the offered `caskapp`: matching is by whole id.
 assert_eq "an option implying caskapp survives hiding its prefix id cask (Darwin)" "a" \
     "$(

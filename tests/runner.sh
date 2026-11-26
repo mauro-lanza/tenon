@@ -639,14 +639,19 @@ js="$(runc capabilities --json)"
 [[ "$(yq -p json -r '.capabilities | length' <<<"$js")" == 3 ]] || fail "capabilities list wrong: $js"
 [[ "$(yq -p json -r '.capabilities[] | select(.id == "x") | .layer + " " + .desc + " " + (.selected | tostring)' <<<"$js")" == "b override x true" ]] || fail "highest-priority layer did not win: $js"
 [[ "$(yq -p json -r '.capabilities[] | select(.id == "y") | .requires + " " + (.active | tostring) + " " + (.selected | tostring)' <<<"$js")" == "x true false" ]] || fail "requires/adopt wrong: $js"
-runc capabilities select flag y >/dev/null || fail "select failed"
+runc capabilities select flag y --platform Linux >/dev/null || fail "select failed"
 [[ "$(yq -o=json -I0 '.selected_capabilities' "$T/none.yml")" == '["x","flag","y"]' ]] || fail "select wrong: $(cat "$T/none.yml")"
+[[ "$(yq -p json -o json -I0 '[.capabilities[] | select(.offerable) | .id]' <<<"$(runc capabilities --json --platform Darwin)")" == '["flag"]' ]] || fail "offerable on Darwin wrong"
+[[ "$(yq -p json -o json -I0 '[.capabilities[] | select(.offerable) | .id]' <<<"$(runc capabilities --json --platform Linux)")" == '["flag","x","y"]' ]] || fail "offerable on Linux wrong"
+before="$(cat "$T/none.yml")"
+rc=0; err="$(runc capabilities select y --platform Darwin 2>&1)" || rc=$?
+[[ "$rc" == 64 && "$err" == *"'y' is not offerable on Darwin"* && "$err" == *"Linux"* && "$(cat "$T/none.yml")" == "$before" ]] || fail "non-offerable select: rc=$rc $err"
 grep -q '^# keep this comment' "$T/none.yml" || fail "select dropped a comment"
 out="$(runc capabilities deselect x flag)" || fail "deselect failed"
 [[ "$out" == *"Nothing is uninstalled"* ]] || fail "deselect did not say it removes nothing: $out"
 [[ "$(yq -o=json -I0 '.selected_capabilities' "$T/none.yml")" == '["y"]' ]] || fail "deselect wrong: $(cat "$T/none.yml")"
 before="$(cat "$T/none.yml")"
-rc=0; err="$(runc capabilities select y nope 2>&1)" || rc=$?
+rc=0; err="$(runc capabilities select flag nope 2>&1)" || rc=$?
 [[ "$rc" == 64 && "$err" == *"no layer declares capability 'nope'"* && "$(cat "$T/none.yml")" == "$before" ]] || fail "unknown id: rc=$rc $err"
 rc=0; runc capabilities select >/dev/null 2>&1 || rc=$?
 [[ "$rc" == 64 ]] || fail "select with no ids exit $rc, want 64"

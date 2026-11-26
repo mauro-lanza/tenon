@@ -1168,14 +1168,17 @@ for expect in \
     "config: has a non-boolean executable:" \
     "config: has a platform: that is not Darwin or Linux" \
     "shell_config_files key 'no-such-shell-file' matches no files/" \
-    "config src 'no-such-config-file' matches no files/"
+    "config src 'no-such-config-file' matches no files/" \
+    "capability 'deadreq' is offerable on no platform" \
+    "preset selects capability 'deadreq', which is offerable on no platform" \
+    "capability 'badplatforms' platforms: must be a non-empty list"
 do
     if ! grep -qF "$expect" <<<"$lint_out"; then
         echo "ERROR: linter did not report: $expect" >&2
         exit 1
     fi
 done
-echo "  ok  all 17 broken references rejected"
+echo "  ok  all 20 broken references rejected"
 
 # One malformed file is one error, not one per projection read from it.
 malformed_count="$(grep -cF "malformed/capabilities.yml is not valid YAML" <<<"$lint_out" || true)"
@@ -1277,6 +1280,16 @@ if [[ -z "$lm_lint" || "$lm_profiles" != "$lm_lint" ]]; then
     exit 1
 fi
 echo "  ok  lint knows every package manager"
+
+for platform in Darwin Linux; do
+    pm_profile="$(yq -r '.tenon_platform.package_managers | keys | .[]' "roles/core/vars/platform/$platform.yml" | tr '\n' ' ')"
+    pm_lint="$(sed -n "s/^MANAGERS_$platform=\"\(.*\)\"\$/\1/p" scripts/tenon-layers | tr ' ' '\n' | grep -v '^$' | tr '\n' ' ')"
+    if [[ -z "$pm_lint" ]] || [[ "$(tr ' ' '\n' <<<"$pm_profile" | sort | tr '\n' ' ')" != "$(tr ' ' '\n' <<<"$pm_lint" | sort | tr '\n' ' ')" ]]; then
+        echo "ERROR: MANAGERS_$platform ('$pm_lint') disagrees with the $platform profile ('$pm_profile')" >&2
+        exit 1
+    fi
+done
+echo "  ok  capability platforms follow each profile's package managers"
 }
 
 # A gate, not an advisory: .ansible-lint waives the two rules that contradict

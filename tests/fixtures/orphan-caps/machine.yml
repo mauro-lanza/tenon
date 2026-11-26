@@ -1,0 +1,3 @@
+layers:
+  - {name: l, priority: 10, repo: r}
+selected_capabilities: [on]

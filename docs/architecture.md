@@ -158,18 +158,27 @@ candidate managers (macOS: `brew`, `cask`, `uv`; Linux: `pacman`, `aur` via paru
 plus the selected capabilities' `packages:`, for detected managers only. The
 `packages` role loops over those, one task file per manager and action
 (`converge/<m>.yml`, `upgrade/<m>.yml`), so adding a manager is a profile entry
-plus two task files. A selected capability with no key for any detected manager
-is reported (`tenon_uninstallable_selections`) rather than silently
-installing nothing; its config still deploys. The bootstrap menu applies the
-same test to the profile's candidates, so capabilities, preset entries and
-question options (via `implies:`) this platform cannot install are never
-offered; apply's warning stays the backstop for a hand-edited `machine.yml` or
-an `--answers` file. Homebrew taps are derived from
+plus two task files. Homebrew taps are derived from
 `owner/tap/name`, so a tapped package cannot forget its tap.
 
-Detection was chosen over a layer-declared platform list because a declared list
+**Capability platforms.** Where a capability applies is derived once, in
+`scripts/tenon-layers`: its optional `platforms: [Darwin|Linux]` if set, else
+the platforms whose managers (`MANAGERS_<platform>`, kept equal to the profiles'
+`package_managers` by `check.sh`) appear in its `packages:`, plus any
+`extensions:` (every platform) and the `platform:` of its config entries; nothing
+platform-specific means both. Each list is then narrowed by the capability's
+`requires` chain. `capabilities list` reports it as `platforms` and `offerable`.
+Bootstrap (menu, preset entries, question options via `implies:`), `capabilities
+select` (exit 64) and `lint` (a capability offerable nowhere, or a preset naming
+one) all use it; apply only warns about a selected capability that is not
+offerable (`tenon_unofferable_selections`), the backstop for a hand-edited
+`machine.yml` or an `--answers` file. The derivation reads
+no profile at runtime: bootstrap runs before any checkout may exist.
+
+Derivation was chosen over a layer-declared platform list because a declared list
 is one more string that can be wrong, and the failure is the same silent "found
-nothing" every other id lookup here suffers from. Layers split by owner
+nothing" every other id lookup here suffers from; `platforms:` exists only for
+what cannot be derived (a config-only capability for one platform). Layers split by owner
 (public, personal, work), never by platform: a platform-only value goes in that
 layer's `vars/<platform>.yml`.
 

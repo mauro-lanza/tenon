@@ -7,6 +7,10 @@ capabilities:
   # last, so one of these silently does not exist.
   - {id: dup, desc: "first", packages: {brew: a}}
   - {id: dup, desc: "second", packages: {brew: b}}
+  # Offered on Darwin only, yet requires something offered on Linux only: never offered.
+  - {id: linuxonly, desc: "pacman only", packages: {pacman: l}}
+  - {id: deadreq, desc: "requires a capability of the other platform", packages: {brew: d}, requires: linuxonly}
+  - {id: badplatforms, desc: "platforms names no platform", platforms: [Windows]}
   # Gated on a capability no layer declares -> never offered, no error.
   - {id: gated, desc: "gated on a ghost", packages: {brew: g}, requires: nonexistent}
   # The pre-unification shape: a string `packages` with `type:`. The engine

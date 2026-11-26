@@ -1,0 +1,15 @@
+---
+capabilities:
+  - id: "on"
+    desc: selected
+    packages: {brew: keepme}
+  - id: "off"
+    desc: unselected
+    packages: {brew: offf, cask: offc, pacman: offp}
+  - id: adopted
+    desc: unselected but present
+    adopt_if_present: "{{ home_dir }}"
+    packages: {brew: adopted}
+  - id: never
+    desc: unselected, never installed
+    packages: {brew: neverinstalled}

@@ -8,10 +8,12 @@ usage() {
 Usage:
   tenon-layers sync --manifest PATH --cache DIR [--schema-version N]
   tenon-layers lint (--cache DIR | --layer DIR) [--machine FILE]
-  tenon-layers capabilities (list | select ID... | deselect ID...) --manifest PATH --cache DIR [--homebrew-prefix DIR]
+  tenon-layers capabilities (list | select ID... | deselect ID...) --manifest PATH --cache DIR [--homebrew-prefix DIR] [--platform Darwin|Linux]
 
-capabilities  list prints the merged registry as JSON; select/deselect edit
-      selected_capabilities in the manifest (machine.yml) and install or remove nothing.
+capabilities  list prints the merged registry as JSON, with `offerable` for --platform
+      (default: this machine); select/deselect edit selected_capabilities in the
+      manifest (machine.yml) and install or remove nothing. select refuses (64) an id
+      that is not offerable on the platform.
 
 sync  Synchronize content layers from a manifest into the layer cache. Repo URLs
       are used as written; a scheme-less github.com:owner/repo becomes SSH.
@@ -223,6 +225,39 @@ lint_note_count=0
 # manager any of them declares; check.sh asserts both match the profiles.
 LINT_PLATFORMS="Darwin Linux"
 LINT_MANAGERS="brew cask pacman aur flatpak uv"
+# Each platform profile's package_managers; check.sh asserts both match. The one
+# source of where a capability can be offered (see "Capability platforms" in
+# docs/architecture.md); bootstrap.sh reads it through `capabilities list`.
+MANAGERS_Darwin="brew cask uv"
+MANAGERS_Linux="pacman aur flatpak uv"
+export MANAGERS_Darwin MANAGERS_Linux
+# yq expression, run on one capability: its platforms from `platforms:`, else
+# from the managers of its packages, `extensions:` (any platform) and the
+# `platform:` of its config entries; nothing platform-specific means both.
+# shellcheck disable=SC2016 # a yq program: $pk/$k are yq variables
+PLATFORMS_EXPR='(.platforms // (
+    (((.packages | select(tag == "!!map")) // {}) | keys) as $pk
+    | ((if ($pk | any_c(. as $k | strenv(MANAGERS_Darwin) | split(" ") | any_c(. == $k))) then ["Darwin"] else [] end)
+     + (if ($pk | any_c(. as $k | strenv(MANAGERS_Linux) | split(" ") | any_c(. == $k))) then ["Linux"] else [] end))
+    + (if ((.extensions // {}) | length) > 0 then ["Darwin", "Linux"] else [] end)
+    + [.config[]? | .platform | select(. != null)]
+    | unique
+    | (select(length > 0) // ["Darwin", "Linux"])))'
+# A capability is offerable only where everything it `requires` is, so narrow
+# each platform list by its requirement's until nothing changes.
+# shellcheck disable=SC2016 # a yq program: $all/$c/$p are yq variables
+NARROW_BY_REQUIRES='. as $all | map(. as $c | .platforms |= [.[] | . as $p | select(($c.requires == null)
+    or (([$all[] | select(.id == $c.requires)] | length) == 0)
+    or (([$all[] | select(.id == $c.requires and (.platforms | any_c(. == $p)))] | length) > 0))])'
+narrow_by_requires() {
+    local json="$1" next
+    while :; do
+        next="$(printf '%s' "$json" | yq -p json -o json -I0 "$NARROW_BY_REQUIRES")"
+        [[ "$next" == "$json" ]] && break
+        json="$next"
+    done
+    printf '%s' "$json"
+}
 # Layer var names that no role reads any more (renamed by the package
 # unification); a layer still setting one would silently install nothing.
 LINT_REMOVED_VARS="homebrew_baseline_formulae homebrew_baseline_casks homebrew_baseline_taps homebrew_adopt_casks homebrew_update upgrade_casks_exclude upgrade_casks_greedy packages_pacman_baseline packages_aur_baseline packages_flatpak_baseline"
@@ -414,6 +449,11 @@ lint_layers() {
             lint_err "[$name] capability '$ref' config: has a platform: that is not Darwin or Linux"
         done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select([.config[]? | select(has("platform")) | select((.platform | type) != "!!str" or (.platform | test("^(Darwin|Linux)$") | not))] | length > 0) | .id')"
 
+        while IFS= read -r ref; do
+            [[ -z "$ref" ]] && continue
+            lint_err "[$name] capability '$ref' platforms: must be a non-empty list of Darwin or Linux"
+        done <<< "$(lint_read "$d/capabilities.yml" '.capabilities[]? | select(has("platforms")) | select((.platforms | type) != "!!seq" or (.platforms | length) == 0 or ([.platforms[] | select(. != "Darwin" and . != "Linux")] | length) > 0) | .id')"
+
         # config[].src -> a file in files/ or templates/; an unresolved src is
         # silently skipped at deploy time
         while IFS= read -r ref; do
@@ -460,6 +500,37 @@ lint_layers() {
         done <<< "$(lint_read "$d/questions.yml" '.questions[]?.options[]?.implies[]?')"
     done
 
+    # A capability whose own platforms and its requires chain share none is
+    # offered nowhere, so a preset or a dependent naming it selects nothing.
+    # Layers that redeclare an id are merged permissively (union of platforms).
+    local rows="" dead="" bad_preset_cap
+    for d in "${dirs[@]}"; do
+        [[ -f "$d/capabilities.yml" && "$lint_invalid" != *$'\n'"$d/capabilities.yml"$'\n'* ]] || continue
+        rows+="$(yq -o=json -I0 ".capabilities[]? | {\"id\": .id, \"requires\": .requires, \"platforms\": $PLATFORMS_EXPR}" \
+            "$d/capabilities.yml" 2>/dev/null || true)"$'\n'
+    done
+    if [[ -n "${rows//$'\n'/}" ]]; then
+        # shellcheck disable=SC2016 # a yq program
+        rows="$(printf '%s' "$rows" | yq ea -p json -o json -I0 '[.] | group_by(.id) | map({"id": .[0].id,
+            "requires": ([.[].requires | select(. != null)] | .[0]),
+            "platforms": ([.[].platforms[]] | unique)})' 2>/dev/null || true)"
+        if [[ -n "$rows" ]]; then
+            dead="$(narrow_by_requires "$rows" | yq -p json -r '.[] | select(.platforms | length == 0) | .id')"
+            while IFS= read -r ref; do
+                [[ -z "$ref" ]] && continue
+                lint_err "capability '$ref' is offerable on no platform: its platforms and those of what it requires share none"
+            done <<< "$dead"
+            for d in "${dirs[@]}"; do
+                name="$(basename "$d")"
+                while IFS= read -r bad_preset_cap; do
+                    [[ -z "$bad_preset_cap" ]] && continue
+                    lint_has "$bad_preset_cap" "$dead" \
+                        && lint_err "[$name] preset selects capability '$bad_preset_cap', which is offerable on no platform"
+                done <<< "$(lint_read "$d/presets.yml" '.presets[]?.capabilities[]?')"
+            done
+        fi
+    fi
+
     # Report, not an error: presets are curated, so a capability outside every
     # preset is usually deliberate. Worth seeing when you add one.
     local uncovered
@@ -491,25 +562,23 @@ lint_layers() {
 # Merged registry (highest-priority layer wins per id), as the engine builds it,
 # read from the synced cache. `select`/`deselect` edit only machine.yml.
 caps_registry() {
-    local manifest="$1" cache="$2" homebrew_prefix="$3"
+    local manifest="$1" cache="$2" homebrew_prefix="$3" platform="$4"
     local name ord=0 ndjson="" selected adopted="" id adopt
     while IFS= read -r name; do
         ord=$((ord + 1))
         [[ -f "$cache/$name/capabilities.yml" ]] || continue
         # shellcheck disable=SC2016 # `strenv` is yq's, not a shell expansion
-        ndjson+="$(layer="$name" ord="$ord" yq -o=json -I0 '.capabilities[]? | {
-            "id": .id, "desc": .desc, "layer": strenv(layer), "ord": (strenv(ord) | to_number),
-            "requires": .requires, "adopt": .adopt_if_present, "packages": .packages,
-            "platforms": ((if (.packages.brew != null or .packages.cask != null) then ["Darwin"] else [] end)
-                + (if (.packages.pacman != null or .packages.aur != null or .packages.flatpak != null) then ["Linux"] else [] end)
-                + (if ([.packages.uv, .extensions] | map(select(. != null)) | length) > 0 then ["Darwin", "Linux"] else [] end)
-                + [.config[]? | (.platform // ("Darwin", "Linux"))] | unique)}' \
+        ndjson+="$(layer="$name" ord="$ord" yq -o=json -I0 ".capabilities[]? | {
+            \"id\": .id, \"desc\": .desc, \"layer\": strenv(layer), \"ord\": (strenv(ord) | to_number),
+            \"requires\": .requires, \"adopt\": .adopt_if_present, \"packages\": .packages,
+            \"platforms\": $PLATFORMS_EXPR}" \
             "$cache/$name/capabilities.yml")"$'\n'
     done < <(yq -r '.layers | sort_by(.priority) | .[].name' "$manifest")
     [[ -n "$ndjson" ]] || { echo '[]'; return 0; }
 
     local merged
     merged="$(printf '%s' "$ndjson" | yq ea -p json -o json -I0 '[.] | group_by(.id) | map(sort_by(.ord) | .[-1])')"
+    merged="$(narrow_by_requires "$merged")"
     selected=" $(yq -r '.selected_capabilities[]?' "$manifest" | tr '\n' ' ')"
     while IFS=$'\t' read -r id adopt; do
         [[ -n "$adopt" ]] || continue
@@ -518,15 +587,17 @@ caps_registry() {
         [[ -e "$adopt" ]] && adopted+=" $id "
     done < <(printf '%s' "$merged" | yq -p json -r '.[] | select(.adopt != null) | .id + "\t" + .adopt')
     # shellcheck disable=SC2016 # `$c` and `strenv` are yq's
-    printf '%s' "$merged" | selected="$selected" adopted="$adopted" yq -p json -o json -I0 \
+    printf '%s' "$merged" | selected="$selected" adopted="$adopted" platform="$platform" yq -p json -o json -I0 \
         'sort_by(.id) | map(. as $c
             | .selected = (strenv(selected) | contains(" " + $c.id + " "))
             | .active = (.selected or (strenv(adopted) | contains(" " + $c.id + " ")))
-            | del(.ord) | del(.adopt) | del(.requires | select(. == null)) | del(.packages | select(. == null)) | del(.platforms | select(length == 0)))'
+            | .offerable = (.platforms | any_c(. == strenv(platform)))
+            | del(.ord) | del(.adopt) | del(.requires | select(. == null)) | del(.packages | select(. == null)))'
 }
 
 capabilities() {
-    local sub="${1:-}" manifest="" cache="" homebrew_prefix=""
+    local sub="${1:-}" manifest="" cache="" homebrew_prefix="" platform
+    platform="$(uname -s)"
     [[ $# -gt 0 ]] && shift
     local -a ids=()
     while [[ $# -gt 0 ]]; do
@@ -534,27 +605,35 @@ capabilities() {
             --manifest) manifest="${2:?--manifest needs a value}"; shift 2 ;;
             --cache) cache="${2:?--cache needs a value}"; shift 2 ;;
             --homebrew-prefix) homebrew_prefix="${2:?--homebrew-prefix needs a value}"; shift 2 ;;
+            --platform) platform="${2:?--platform needs a value}"; shift 2 ;;
             -*) die "Unknown argument: $1" ;;
             *) ids+=("$1"); shift ;;
         esac
     done
+    [[ " $LINT_PLATFORMS " == *" $platform "* ]] || die "Unknown platform: $platform (expected one of: $LINT_PLATFORMS)"
     [[ -f "$manifest" ]] || die "Layer manifest does not exist: ${manifest:-(--manifest not given)}"
     [[ -d "$cache" ]] || die "No layer cache at: ${cache:-(--cache not given)}; run \`tenon layers sync\`"
 
     local registry
-    registry="$(caps_registry "$manifest" "$cache" "$homebrew_prefix")"
+    registry="$(caps_registry "$manifest" "$cache" "$homebrew_prefix" "$platform")"
     case "$sub" in
         list)
             printf '{"schema_version": 1, "capabilities": %s}\n' "$registry"
             ;;
         select|deselect)
             [[ ${#ids[@]} -gt 0 ]] || { echo "Usage: tenon capabilities $sub <id>..." >&2; exit 64; }
-            local id known current
+            local id known current offerable
             known="$(printf '%s' "$registry" | yq -p json -r '.[].id')"
+            offerable="$(printf '%s' "$registry" | yq -p json -r '.[] | select(.offerable) | .id')"
             current="$(yq -r '.selected_capabilities[]?' "$manifest")"
             # Validated up front so a typo changes nothing. A stale id already in
             # machine.yml may still be deselected.
             for id in "${ids[@]}"; do
+                if [[ "$sub" == select ]] && lint_has "$id" "$known" && ! lint_has "$id" "$offerable"; then
+                    printf 'ERROR: capability %s is not offerable on %s: %s\n' "'$id'" "$platform" \
+                        "$(printf '%s' "$registry" | id="$id" yq -p json -r '.[] | select(.id == strenv(id)) | "it targets " + (.platforms | join(", "))')" >&2
+                    exit 64
+                fi
                 lint_has "$id" "$known" && continue
                 [[ "$sub" == deselect ]] && lint_has "$id" "$current" && continue
                 printf 'ERROR: no layer declares capability %s\n' "'$id'" >&2

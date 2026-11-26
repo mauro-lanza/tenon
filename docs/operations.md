@@ -65,14 +65,16 @@ Exit codes: see "Exit codes" below.
 The capability registry and the selection in `machine.yml`:
 
 ```bash
-tenon capabilities --json        # {"schema_version": 1, "capabilities": [{id, desc, layer, selected, active, requires?, platforms?, packages?}]}
+tenon capabilities --json        # {"schema_version": 1, "capabilities": [{id, desc, layer, selected, active, offerable, platforms, requires?, packages?}]}
 tenon capabilities select ID...  # edits selected_capabilities only; run `tenon apply` after
 tenon capabilities deselect ID...
 ```
 
 `layer` is the highest-priority layer declaring the id; `active` is selected or
-adopted (`adopt_if_present` path exists); `platforms` lists where it installs
-or deploys anything (omitted if nowhere). Unknown ids exit 64 and change
+adopted (`adopt_if_present` path exists); `platforms` is where it applies (see
+"Capability platforms" in `architecture.md`) and `offerable` is whether this
+machine's platform is one of them (`--platform Darwin|Linux` overrides it, for
+tests). Unknown ids, and ids not offerable here, exit 64 on `select` and change
 nothing. Deselecting never uninstalls: software and files stay, and show as
 orphans in `tenon orphans`.
 

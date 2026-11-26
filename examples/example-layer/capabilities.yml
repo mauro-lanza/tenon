@@ -25,7 +25,14 @@
 #   extensions:       (optional) extension manager id (an `extension_managers`
 #                     entry in vars) -> space-separated extension ids
 #   requires:         (optional) another capability id; only prompt when that
-#                     one is selected earlier in the run or already present
+#                     one is selected earlier in the run or already present.
+#                     Also limits the platforms: offered only where it is.
+#   platforms:        (optional) [Darwin|Linux], where the capability is offered.
+#                     Overrides what is otherwise derived from the package
+#                     managers, `extensions:` and config `platform:` entries
+#                     (a manager used on one platform only restricts to it,
+#                     `uv` and `extensions` apply everywhere). Set it for a
+#                     config-only capability that makes sense on one platform.
 #   config:           (optional) files/templates deployed when the capability is
 #                     active (highest-priority layer supplies the file):
 #                       - { src: <lookup key>, dest: <path>, executable: bool,
