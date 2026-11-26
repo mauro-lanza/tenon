@@ -39,9 +39,9 @@ that quietly stopped syncing weeks ago otherwise looks exactly like a healthy
 one. Past `drift_correction_stale_after_days` (14 by default) it reports
 `STALE`.
 
-`tenon status --json` prints the same thing for machines. It is the
-interface a UI would consume; see "Run state" in
-[architecture.md](architecture.md) for the shape and its guarantees. It also
+`tenon status --json` prints the same thing for machines. See "Run state" in
+[architecture.md](architecture.md) for the shape and its guarantees, and
+"Machine-readable interface" below for the supported fields. It also
 carries `"schedule": {"upgrade": "09:00", "check": "10:00"}` (local times of the
 engine's own agents), `null` where there is no scheduler (Linux) or the agents
 are off.
@@ -60,12 +60,12 @@ it is wrong. An empty line skips root steps, like pressing Enter. The flag is
 rejected (64) where the platform asks for no password. `--yes` skips the
 `Proceed?` confirmation and the terminal requirement; `upgrade` still refuses
 without a terminal when it is absent. Neither flag makes a run partial.
-Exit codes: 64 usage, 65 wrong sudo password.
+Exit codes: see "Exit codes" below.
 
 The capability registry and the selection in `machine.yml`:
 
 ```bash
-tenon capabilities --json        # {"capabilities": [{id, desc, layer, selected, active, requires?, platforms?}]}
+tenon capabilities --json        # {"schema_version": 1, "capabilities": [{id, desc, layer, selected, active, requires?, platforms?}]}
 tenon capabilities select ID...  # edits selected_capabilities only; run `tenon apply` after
 tenon capabilities deselect ID...
 ```
@@ -335,6 +335,67 @@ had no answer short of reading the log afterwards.
 It reports `starting` during the layer sync and `ansible-pull` fetch, before the
 first task exists, and says so plainly if a run was interrupted rather than
 animating a bar for a process that died.
+
+## Machine-readable interface
+
+Supported for other programs (versioned; a breaking change bumps `schema_version`).
+Everything else in the state directory is internal.
+
+`tenon status --json`:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1` |
+| `current_run` | `null` when idle, else the object below |
+| `last_success`, `days_since_success`, `stale` | last successful scheduled run (`null`, `null`, `false` if none) |
+| `days_since_upgrade_success` | days since the last scheduled upgrade, `null` if none |
+| `schedule` | `{"upgrade": "HH:MM", "check": "HH:MM"}`, or `null` |
+| `last_run` | the `last-run.json` contents, `null` if none |
+
+`current_run` is non-null only while `run.lock` is held by a live process:
+
+```json
+{"run_id": "12345-1795690037", "mode": "check", "pid": 12345,
+ "started": "2026-11-26T11:47:17+0100", "log": "/Users/you/Library/Logs/tenon/20261126-114717-check.log",
+ "phase": "running", "task": "homebrew : Install casks", "n": 88, "total": 202, "indeterminate": false}
+```
+
+`phase` is `launching` (before ansible starts: git, layer sync; `task` null,
+`n` 0), `running`, or `stalled` (process alive, no progress for 300 seconds).
+`total` is the largest task count among the last 5 completed non-partial runs of
+the same mode, `null` without history; `indeterminate` is true when `total` is
+null or `n` has passed it. In the instant between taking the lock and writing
+`launching`, `run_id`, `mode`, `started` and `log` are `null`.
+
+`tenon capabilities --json` carries `"schema_version": 1` beside `capabilities`.
+
+Files in `~/.local/state/tenon/` (see [architecture.md](architecture.md)):
+
+- `progress.jsonl`: the live run, truncated by every run. Every line has
+  `schema_version` (1) and an `event`: `launching` and `start` (`mode`,
+  `run_id`, `started`, `log`; `start` also `partial`, `total_estimate`), `task`
+  (`n`, `task`, `role`, `handler`), `end` (`result`, `tasks`, `changed`,
+  `failed`, `finished`). A file with no `end` and no live lock is an interrupted
+  run. Use `status --json` to know whether a run is live.
+- `history.jsonl`: one line per run, oldest trimmed past 500. Fields: `schema_version`
+  (1), `finished`, `mode`, `partial`, `result` (`ok`|`failed`), `duration_seconds`,
+  `changed`, `failed`, `ok`, `tasks`, `log`, `run_id`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | success; also a scheduled run skipped because another run holds the lock or the repo is unreachable |
+| 1 | failure (a failed run returns ansible-pull's code; an unreachable repo, a missing terminal, a missing path) |
+| 64 | usage error: bad arguments, unknown capability id, `apply --check`, a flag the platform does not use |
+| 65 | `--password-stdin` got a wrong sudo password; nothing ran |
+| 75 | `apply`, `check` or `upgrade` refused because another run holds `run.lock` (stderr names its pid) |
+
+### Log directory
+
+`~/Library/Logs/tenon/` on macOS, `~/.local/state/tenon/logs/` on Linux; files
+are `<YYYYmmdd-HHMMSS>-<mode>.log`. `current_run.log` and each history line give
+the exact path.
 
 ## Credentials
 

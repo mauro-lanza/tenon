@@ -58,6 +58,9 @@ HISTORY_SCHEMA_VERSION = 1
 # 193" from "finished" from "died half way".
 PROGRESS_SCHEMA_VERSION = 1
 
+# Completed runs the task-count estimate looks back over.
+ESTIMATE_RUNS = 5
+
 # Runs of history to keep. Two scheduled runs a day makes this most of a year,
 # at roughly 200 bytes a line. Deliberately NOT capped the way `changed` is:
 # an inventory or a history that silently drops entries is worse than a big
@@ -294,19 +297,23 @@ class CallbackModule(CallbackBase):
 
     # ── live progress ────────────────────────────────────────────────────────
     def _estimate_total(self):
-        """Task count of the previous run of the same mode (architecture.md, "Live progress")."""
+        """Largest task count among the last 5 completed non-partial runs of this mode (architecture.md, "Live progress")."""
         if not self.history_file:
             return None
         try:
             with open(self.history_file) as stream:
                 lines = [line for line in stream.read().splitlines() if line.strip()]
+            counts = []
             for line in reversed(lines):
                 record = json.loads(line)
-                if record.get("mode") == self.run_mode and record.get("tasks"):
-                    return record["tasks"]
+                if (record.get("mode") == self.run_mode and record.get("result") == "ok"
+                        and not record.get("partial") and record.get("tasks")):
+                    counts.append(record["tasks"])
+                    if len(counts) == ESTIMATE_RUNS:
+                        break
+            return max(counts) if counts else None
         except Exception:
-            pass
-        return None
+            return None
 
     def _progress(self, payload):
         if not self.progress_file:
@@ -328,10 +335,12 @@ class CallbackModule(CallbackBase):
                     "partial": self.partial,
                     "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "total_estimate": self._estimate_total(),
+                    "log": self.log_file or None,
                 }
                 if self.run_id:
                     header["run_id"] = self.run_id
                 self.progress_handle.write(json.dumps(header, sort_keys=True) + "\n")
+            payload = dict(payload, schema_version=PROGRESS_SCHEMA_VERSION)
             self.progress_handle.write(json.dumps(payload, sort_keys=True) + "\n")
             # Flushed every line, or a reader tailing the file sees nothing
             # until the run ends — which is the one moment it does not need it.

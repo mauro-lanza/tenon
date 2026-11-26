@@ -134,6 +134,19 @@ log() { printf '%s\n' "$*" >> "${RUN_LOG:-/dev/null}"; }
 # lets a crashed holder's lock be cleared. A run suspended by sleep keeps its
 # pid, correctly.
 LOCK_DIR="${STATE_DIR}/run.lock"
+# Exit code of an interactive command refused because a run holds the lock.
+# Documented in docs/operations.md.
+EXIT_BUSY=75
+
+# Prints the pid of the live lock holder; fails when no run is in progress. The
+# lock, not progress.jsonl, is the truth about "running" (docs/architecture.md,
+# "Live progress").
+live_lock_pid() {
+    local pid
+    pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 1
+    echo "$pid"
+}
 
 # Returns 0 with the lock held, 1 with the holder's pid in LOCK_HOLDER.
 acquire_lock() {
@@ -164,7 +177,7 @@ acquire_lock() {
 require_lock() {
     acquire_lock && return 0
     printf '%s\n' "tenon: another run is in progress (pid ${LOCK_HOLDER:-unknown}). Wait for it, or see \`tenon progress\`." >&2
-    return 1
+    return "$EXIT_BUSY"
 }
 
 # Called first, before anything can log, so a run that skips early still has a
@@ -181,8 +194,13 @@ start_run_log() {
     TENON_RUN_ID="$$-$(date +%s)"
     export TENON_RUN_ID
     mkdir -p "$STATE_DIR" 2>/dev/null || true
-    printf '{"schema_version":1,"event":"launching","mode":"%s","run_id":"%s","started":"%s"}\n' \
-        "$1" "$TENON_RUN_ID" "$(date '+%Y-%m-%dT%H:%M:%S%z')" > "$PROGRESS_FILE" 2>/dev/null || true
+    local log_json=null
+    if [[ -n "$RUN_LOG" ]]; then
+        log_json="${RUN_LOG//\\/\\\\}"
+        log_json="\"${log_json//\"/\\\"}\""
+    fi
+    printf '{"schema_version":1,"event":"launching","mode":"%s","run_id":"%s","started":"%s","log":%s}\n' \
+        "$1" "$TENON_RUN_ID" "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$log_json" > "$PROGRESS_FILE" 2>/dev/null || true
     chmod 600 "$PROGRESS_FILE" 2>/dev/null || true
 }
 
@@ -190,7 +208,7 @@ start_run_log() {
 # `end`; without one readers show a running run. Never overwrites the callback's own.
 close_unfinished_run() {
     [[ "$(tail -n 1 "$PROGRESS_FILE" 2>/dev/null)" == *'"event": "end"'* ]] && return 0
-    printf '{"event": "end", "result": "failed", "tasks": 0, "changed": 0, "failed": 0, "finished": "%s"}\n' \
+    printf '{"schema_version": 1, "event": "end", "result": "failed", "tasks": 0, "changed": 0, "failed": 0, "finished": "%s"}\n' \
         "$(date '+%Y-%m-%dT%H:%M:%S%z')" >> "$PROGRESS_FILE" 2>/dev/null || true
 }
 
@@ -285,7 +303,7 @@ state_env() {
 # callers' fixed flags are already in the argument list.
 run_foreground() {
     local mode="$1" partial="$2"; shift 2
-    require_lock || return 1
+    require_lock || return $?
     start_run_log "$mode"
 
     # Scoped to the probe: BatchMode fails fast instead of prompting, without
@@ -486,7 +504,7 @@ cmd_upgrade() {
 
     # Taken after the prompts so a refusal wastes no confirmation. Logged like any
     # run: this is the one most likely to fail.
-    require_lock || { unset TENON_SUDO_PASSWORD; return 1; }
+    require_lock || { local rc=$?; unset TENON_SUDO_PASSWORD; return "$rc"; }
     start_run_log upgrade
     sync_layers || printf '%s\n' "WARN: layer sync failed; continuing with cached content" >&2
     # Always partial: `--tags upgrade` says nothing about the rest of the machine.
@@ -535,6 +553,8 @@ cmd_status() {
     if [[ "${1:-}" == "--json" ]]; then
         # Composed here, so consumers need not redo the date maths for staleness.
         printf '{\n'
+        printf '  "schema_version": 1,\n'
+        printf '  "current_run": %s,\n' "$(current_run_json)"
         stamp="$(read_stamp "$LAST_SUCCESS_FILE")"
         if [[ -n "$stamp" ]]; then stamp="\"$stamp\""; else stamp=null; fi
         printf '  "last_success": %s,\n' "$stamp"
@@ -688,6 +708,35 @@ cmd_history() {
 # Seconds without progress before `progress` reports a run as stalled.
 PROGRESS_STALLED_SECONDS=300
 
+# The `current_run` value of `status --json`: null unless the lock is held by a
+# live pid. The progress file only describes the run whose id starts with that
+# pid; in the moment between taking the lock and `launching`, it still holds the
+# previous run, so the fields are null.
+current_run_json() {
+    local pid head last_task='' phase=launching age
+    pid="$(live_lock_pid)" || { echo null; return 0; }
+    head="$(head -n1 "$PROGRESS_FILE" 2>/dev/null || true)"
+    if [[ "$(yq -p json -r '.run_id // ""' <<<"$head" 2>/dev/null)" != "${pid}-"* ]]; then
+        head='{}'
+    fi
+    if [[ "$head" != '{}' && "$(yq -p json -r '.event' <<<"$head" 2>/dev/null)" == start ]]; then
+        phase=running
+        age=$(( $(date +%s) - $(file_mtime "$PROGRESS_FILE" || echo 0) ))
+        [[ "$age" -gt "$PROGRESS_STALLED_SECONDS" ]] && phase=stalled
+        last_task="$(tail -n 20 "$PROGRESS_FILE" \
+            | yq -p json -o json -I0 'select(.event == "task")' 2>/dev/null | tail -n 1)"
+    fi
+    [[ -n "$last_task" ]] || last_task='{}'
+    CR_PID="$pid" CR_PHASE="$phase" CR_N="$(yq -p json '.n // 0' <<<"$last_task" 2>/dev/null)" \
+        CR_TASK="$(yq -p json -r '.task // ""' <<<"$last_task" 2>/dev/null)" \
+        yq -p json -o json -I0 '
+            {"run_id": (.run_id // null), "mode": (.mode // null), "pid": (env(CR_PID) | to_number),
+             "started": (.started // null), "log": (.log // null), "phase": strenv(CR_PHASE),
+             "task": (strenv(CR_TASK) | select(length > 0) // null), "n": (env(CR_N) | to_number),
+             "total": (.total_estimate // null),
+             "indeterminate": ((.total_estimate // null) == null or (env(CR_N) | to_number) > .total_estimate)}' <<<"$head"
+}
+
 # For runs you did not start (09:00 upgrade, 10:00 check): otherwise invisible
 # while they run. Interactive runs print their own progress.
 cmd_progress() {
@@ -710,17 +759,22 @@ cmd_progress() {
         return 0
     fi
 
+    # No end marker does not mean live: the run may have been killed. The lock
+    # tells the two apart.
+    if ! live_lock_pid >/dev/null; then
+        printf 'Not running. The last run (%s) was interrupted at task %s.\n' "$mode" "${n:-0}"
+        return 0
+    fi
+
     if [[ "$head_event" == "launching" ]]; then
         printf '%s  starting — syncing layers and fetching the orchestrator\n' "$mode"
         return 0
     fi
 
-    # No end marker does not mean live: the run may have been killed. mtime tells
-    # the two apart.
     local age
     age=$(( $(date +%s) - $(file_mtime "$PROGRESS_FILE" || echo 0) ))
     if [[ "$age" -gt "$PROGRESS_STALLED_SECONDS" ]]; then
-        printf 'Stalled or interrupted — no progress for %sm, stopped at task %s.\n' \
+        printf 'Stalled — no progress for %sm, at task %s.\n' \
             "$(( age / 60 ))" "${n:-?}"
         printf '  last: %s\n' "$current"
         return 0

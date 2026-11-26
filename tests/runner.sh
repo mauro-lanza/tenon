@@ -99,16 +99,22 @@ out="$(run _scheduled-check)" || fail "a busy scheduled run must exit 0"
 [[ "$out" == *"another run is in progress (pid $holder)"* ]] || fail "busy skip not explained: $out"
 [[ ! -e "$T/pull-calls" ]] || fail "ansible-pull ran while the lock was held"
 [[ "$(cat "$T/state/progress.jsonl")" == '{"event":"sentinel"}' ]] || fail "a skipped run clobbered the live run's progress"
-if err="$(run apply 2>&1)"; then fail "an interactive run was not refused"; fi
+rc=0; err="$(run apply 2>&1)" || rc=$?
+[[ "$rc" == 75 ]] || fail "an interactive run was not refused with 75: rc=$rc"
 [[ "$err" == *"pid $holder"* ]] || fail "refusal does not name the holder: $err"
 [[ ! -e "$T/pull-calls" ]] || fail "ansible-pull ran while refused"
-echo "  ok  live lock: scheduled skips, interactive refuses, progress untouched"
+echo "  ok  live lock: scheduled skips, interactive refuses (75), progress untouched"
 
 kill "$holder"; wait "$holder" 2>/dev/null || true
 run apply >/dev/null 2>&1 || fail "a dead holder's lock was not cleared"
 [[ -e "$T/pull-calls" ]] || fail "run did not proceed past a stale lock"
 [[ ! -e "$T/state/run.lock" ]] || fail "lock not released after the run"
 echo "  ok  stale lock cleared, lock released on exit"
+
+# The launching line names this run's log and carries the version.
+head -n 1 "$T/state/progress.jsonl" | yq -p json -r '[.event, (.schema_version | tostring), .log] | join(" ")' > "$T/launching"
+[[ "$(cat "$T/launching")" == "launching 1 $T/logs/"*"-apply.log" && -f "${T}/logs/$(basename "$(cut -d' ' -f3 "$T/launching")")" ]] || fail "launching line lacks schema_version/log: $(cat "$T/launching")"
+echo "  ok  launching line carries schema_version and the run's log"
 
 # 5b. A launcher failure before the playbook closes the progress file with a
 #     failed `end`; a run's own `end` is left alone.
@@ -323,10 +329,17 @@ progress_file() { printf '%s\n' "$@" > "$T/state/progress.jsonl"; }
 rm -f "$T/state/progress.jsonl"
 [[ "$(run progress)" == "No run has recorded progress yet." ]] || fail "no-progress message changed"
 
+HEAD='{"event":"start","mode":"apply","run_id":"1","total_estimate":40}'
+progress_file "$HEAD" '{"event":"task","n":10,"task":"Install foo"}'
+[[ "$(run progress)" == "Not running. The last run (apply) was interrupted at task 10." ]] || fail "no lock must not read as running: $(run progress)"
+progress_file '{"event":"launching","mode":"upgrade","run_id":"1","started":"x"}'
+[[ "$(run progress)" == "Not running. The last run (upgrade) was interrupted at task 0." ]] || fail "launching with no lock must not read as starting"
+
+# Everything below is a live run: the lock is held by a live pid.
+mkdir "$T/state/run.lock"; sleep 120 & holder=$!; echo "$holder" > "$T/state/run.lock/pid"
 progress_file '{"event":"launching","mode":"upgrade","run_id":"1","started":"x"}'
 [[ "$(run progress)" == "upgrade  starting — syncing layers and fetching the orchestrator" ]] || fail "launching line changed"
 
-HEAD='{"event":"start","mode":"apply","run_id":"1","total_estimate":40}'
 progress_file "$HEAD" '{"event":"task","n":1,"task":"first"}' '{"event":"task","n":10,"task":"Install foo"}'
 [[ "$(run progress)" == "apply  [#####...............] 25%  10/40"$'\n'"  now: Install foo" ]] || fail "running line changed: $(run progress)"
 progress_file "$HEAD" '{"event":"task","n":50,"task":"Past the estimate"}'
@@ -337,11 +350,11 @@ progress_file '{"event":"start","mode":"check","run_id":"1"}' '{"event":"task","
 progress_file "$HEAD" '{"event":"task","n":10,"task":"Install foo"}'
 touch -t 202001010000 "$T/state/progress.jsonl"
 out="$(run progress)"
-[[ "$out" == "Stalled or interrupted — no progress for "*"m, stopped at task 10."$'\n'"  last: Install foo" ]] || fail "stalled line changed: $out"
-touch -t "$(ago 4 M '%Y%m%d%H%M')" "$T/state/progress.jsonl"
-[[ "$(run progress)" == "apply  [#####"* ]] || fail "a 4-minute-old file counted as stalled"
+[[ "$out" == "Stalled — no progress for "*"m, at task 10."$'\n'"  last: Install foo" ]] || fail "stalled line changed: $out"
+touch -t "$(ago 3 M '%Y%m%d%H%M')" "$T/state/progress.jsonl"
+[[ "$(run progress)" == "apply  [#####"* ]] || fail "a 3-minute-old file counted as stalled"
 touch -t "$(ago 6 M '%Y%m%d%H%M')" "$T/state/progress.jsonl"
-[[ "$(run progress)" == "Stalled or interrupted"* ]] || fail "a 6-minute-old file not stalled"
+[[ "$(run progress)" == "Stalled"* ]] || fail "a 6-minute-old file not stalled"
 
 progress_file "$HEAD" '{"event":"task","n":10,"task":"Install foo"}' '{"event":"end","result":"failed","tasks":12}'
 touch -t 202001010000 "$T/state/progress.jsonl"
@@ -356,11 +369,41 @@ out="$(run progress)"
 [[ "$out" == "apply  [....................] 0%  /40"$'\n'"  now: " ]] || fail "half-written last line (fresh) changed: $out"
 touch -t 202001010000 "$T/state/progress.jsonl"
 out="$(run progress)"
-[[ "$out" == "Stalled or interrupted — no progress for "*"m, stopped at task ?."$'\n'"  last: " ]] || fail "half-written last line (stale) changed: $out"
+[[ "$out" == "Stalled — no progress for "*"m, at task ?."$'\n'"  last: " ]] || fail "half-written last line (stale) changed: $out"
 printf '%s\n%s' "$HEAD" '{"event":"end","result":"ok","tas' > "$T/state/progress.jsonl"
 [[ "$(run progress)" != "Not running"* ]] || fail "a half-written end marker was taken as an end"
 [[ "$(run progress --json)" == "$(run progress)" ]] || fail "progress grew a --json mode"
-echo "  ok  progress: absent, launching, running, clamp, no estimate, stalled, ended, half-written"
+echo "  ok  progress: absent, no lock, launching, running, clamp, no estimate, stalled, ended, half-written"
+
+# 15b. status --json current_run: null without a live lock, else the contract
+#      shape. Same live lock (pid $holder).
+cr() { run status --json | yq -p json -o json -I0 ".current_run${1:-}"; }
+progress_file '{"event":"start","mode":"check","run_id":"1-1"}'
+[[ "$(run status --json | yq -p json -r '.schema_version')" == 1 ]] || fail "status --json lacks schema_version"
+LOG="$T/logs/x.log"
+progress_file "{\"schema_version\":1,\"event\":\"launching\",\"mode\":\"apply\",\"run_id\":\"$holder-9\",\"started\":\"2026-01-01T00:00:00+0000\",\"log\":\"$LOG\"}"
+want="{\"run_id\":\"$holder-9\",\"mode\":\"apply\",\"pid\":$holder,\"started\":\"2026-01-01T00:00:00+0000\",\"log\":\"$LOG\",\"phase\":\"launching\",\"task\":null,\"n\":0,\"total\":null,\"indeterminate\":true}"
+[[ "$(cr)" == "$want" ]] || fail "launching current_run wrong: $(cr)"
+progress_file "{\"event\":\"start\",\"mode\":\"check\",\"run_id\":\"$holder-9\",\"started\":\"s\",\"log\":\"$LOG\",\"total_estimate\":40}" \
+    '{"event":"task","n":1,"task":"first"}' '{"event":"task","n":10,"task":"Install | foo"}'
+want="{\"run_id\":\"$holder-9\",\"mode\":\"check\",\"pid\":$holder,\"started\":\"s\",\"log\":\"$LOG\",\"phase\":\"running\",\"task\":\"Install | foo\",\"n\":10,\"total\":40,\"indeterminate\":false}"
+[[ "$(cr)" == "$want" ]] || fail "running current_run wrong: $(cr)"
+progress_file "{\"event\":\"start\",\"mode\":\"check\",\"run_id\":\"$holder-9\",\"started\":\"s\"}" '{"event":"task","n":50,"task":"t"}'
+[[ "$(cr .indeterminate)" == "true" && "$(cr .total)" == null && "$(cr .log)" == null ]] || fail "no estimate not indeterminate: $(cr)"
+progress_file "{\"event\":\"start\",\"mode\":\"check\",\"run_id\":\"$holder-9\",\"total_estimate\":40}" '{"event":"task","n":50,"task":"t"}'
+[[ "$(cr .indeterminate)" == "true" && "$(cr .total)" == 40 ]] || fail "n past total not indeterminate: $(cr)"
+touch -t 202001010000 "$T/state/progress.jsonl"
+[[ "$(cr .phase)" == '"stalled"' && "$(cr .pid)" == "$holder" ]] || fail "old progress with a live lock not stalled: $(cr)"
+progress_file '{"event":"start","mode":"apply","run_id":"1-1","total_estimate":40}' '{"event":"task","n":5,"task":"previous run"}'
+[[ "$(cr .phase)" == '"launching"' && "$(cr .run_id)" == null && "$(cr .n)" == 0 ]] || fail "previous run's progress leaked into current_run: $(cr)"
+kill "$holder"; wait "$holder" 2>/dev/null || true
+progress_file "{\"event\":\"start\",\"mode\":\"check\",\"run_id\":\"$holder-9\"}" '{"event":"task","n":3,"task":"x"}'
+[[ "$(cr)" == null ]] || fail "a dead lock holder still reads as running: $(cr)"
+rm -rf "$T/state/run.lock"
+[[ "$(cr)" == null ]] || fail "no lock must be null: $(cr)"
+rm -f "$T/state/progress.jsonl"
+[[ "$(cr)" == null ]] || fail "no progress file, no lock must be null"
+echo "  ok  status --json: current_run null/launching/running/stalled, indeterminate, dead lock, stale progress ignored"
 
 # 16. upgrade, on a pty (it refuses without a terminal on stdin). ansible-pull is
 #     stubbed to record TENON_SUDO_PASSWORD and its output; a yq stub records the
@@ -526,7 +569,7 @@ printf '{"event":"sentinel"}\n' > "$T/state/progress.jsonl"
 rc=0; out="$(upgrade_tty $'y\nhunter2\n' -)" || rc=$?
 kill "$holder"; wait "$holder" 2>/dev/null || true
 rm -rf "$T/state/run.lock"
-[[ "$rc" == 1 ]] || fail "a locked upgrade did not exit 1: rc=$rc"
+[[ "$rc" == 75 ]] || fail "a locked upgrade did not exit 75: rc=$rc"
 [[ "$out" == *"macOS password"* ]] || fail "the lock was checked before the prompts"
 [[ "$out" == *"another run is in progress (pid $holder)"* ]] || fail "refusal does not name the holder: $out"
 [[ "$out" != *PULL-OUTPUT* ]] || fail "locked upgrade ran"

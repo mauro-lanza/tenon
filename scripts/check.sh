@@ -725,6 +725,33 @@ assert hist[-1]["tasks"] == end["tasks"], hist[-1]
 print(f"  ok  {len(tasks)} tasks streamed, replaced not appended, end marker present")
 PYEOF
 
+# The estimate is the largest task count among the last 5 completed (ok,
+# non-partial) runs of the same mode: a failed or narrowed run is short, and a
+# single outlier must not set the scale.
+cs_py "$cs_pdir" <<'PYEOF'
+import json
+rows = [("apply", "ok", False, 900)]
+rows += [("apply", "ok", False, n) for n in (100, 110, 120, 130, 140)]
+rows += [("apply", "ok", True, 999), ("apply", "failed", False, 999), ("check", "ok", False, 777)]
+with open(os.path.join(d, "estimate-history.jsonl"), "w") as f:
+    for mode, result, partial, tasks in rows:
+        f.write(json.dumps({"mode": mode, "result": result, "partial": partial, "tasks": tasks}) + "\n")
+PYEOF
+cs_run apply 0 prog-3 TENON_PROGRESS_FILE="$cs_pdir/progress-3.jsonl" \
+    TENON_HISTORY_FILE="$cs_pdir/estimate-history.jsonl" TENON_LOG_FILE="$cs_pdir/x.log" \
+    tests/manifest.yml -e "m=$cs_pdir/scratch"
+cs_run upgrade 0 prog-4 TENON_PROGRESS_FILE="$cs_pdir/progress-4.jsonl" \
+    TENON_HISTORY_FILE="$cs_pdir/estimate-history.jsonl" tests/manifest.yml -e "m=$cs_pdir/scratch"
+cs_py "$cs_pdir" <<'PYEOF'
+head = jsonl("progress-3.jsonl")[0]
+assert head["total_estimate"] == 140, head
+assert head["log"] == os.path.join(d, "x.log"), head
+assert head["schema_version"] == 1, head
+assert all(l["schema_version"] == 1 for l in jsonl("progress-3.jsonl")), "a progress line is unversioned"
+assert jsonl("progress-4.jsonl")[0]["total_estimate"] is None, "a mode with no history got an estimate"
+print("  ok  estimate: max of the last 5 completed runs of the mode, null without history; every line versioned")
+PYEOF
+
 # MAX_RECORDED had never executed: the run-state contract asserts
 # `truncated is False` and nothing drove the other side. It matters on exactly
 # the run nobody has watched — a first apply on a fresh machine, where a large

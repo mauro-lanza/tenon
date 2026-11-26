@@ -695,9 +695,13 @@ see two runs interleaved.
 The denominator is the interesting part. Ansible does not know its own task
 count up front — tasks are generated as roles and includes resolve — so
 `history.jsonl` records the count per run and the next run of the **same mode**
-reads it. Mode matters: `check` and `upgrade` differ by more than a hundred
-tasks. It is counted by the callback rather than derived from `totals`, because
-a looped task is one task and many results.
+reads it: the largest count among the last 5 completed (`ok`, non-partial) runs
+of that mode, `null` when there are none. Mode matters: `check` and `upgrade`
+differ by more than a hundred tasks. It is counted by the callback rather than
+derived from `totals`, because a looped task is one task and many results. An
+included task file inside a loop (per layer, capability or config entry) starts
+its tasks once per iteration, so the count grows with what is declared; it is
+real task starts, not double counting.
 
 Handlers are counted too: they run after the last ordinary task, so a bar sized
 to the estimate would otherwise sit at 100% through them.
@@ -706,15 +710,20 @@ A `launching` marker is written by the runner **before** the layer sync, not by
 the callback. Between invoking a run and its first task there are several
 seconds of git, during which the file would otherwise still describe the
 previous run — so a reader would show "not running" after being asked to run, or
-show the last result as though it were this one.
+show the last result as though it were this one. The `launching` and `start`
+lines carry the run's `log` path; every line carries `schema_version`.
 
 If the runner exits non-zero without the callback having written an `end` (git or
 sync failed before the playbook), the runner appends a failed `end` itself, so the
 failure is visible instead of reading as a running run.
 
-No end marker does not prove a run is live; it may have been killed. The file's
-mtime is the only evidence either way, so consumers report a stall rather than
-animating a bar for a process that died.
+**The lock decides "running", not the file.** `status --json`'s `current_run` is
+non-null only while `run.lock` is held by a live pid; the progress file supplies
+the details, and only if its run id starts with that pid (otherwise it is still
+the previous run, and the fields are null). A held lock whose progress file has
+not moved for 300 seconds reports phase `stalled`: the process is alive, so it
+is not reported as dead, but it is not advancing either. A progress file with no
+`end` and no live lock is an interrupted run.
 
 ## Orchestrator primitives
 

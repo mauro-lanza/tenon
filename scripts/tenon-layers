@@ -545,7 +545,7 @@ capabilities() {
     registry="$(caps_registry "$manifest" "$cache" "$homebrew_prefix")"
     case "$sub" in
         list)
-            printf '{"capabilities": %s}\n' "$registry"
+            printf '{"schema_version": 1, "capabilities": %s}\n' "$registry"
             ;;
         select|deselect)
             [[ ${#ids[@]} -gt 0 ]] || { echo "Usage: tenon capabilities $sub <id>..." >&2; exit 64; }
