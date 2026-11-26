@@ -563,6 +563,8 @@ disk = hashlib.sha256(open(f"{base}/managed.conf", "rb").read()).hexdigest()
 assert by_path[f"{base}/managed.conf"]["sha256"] == disk, by_path[f"{base}/managed.conf"]
 assert by_path[f"{base}/layered.conf"]["layer"] == "base", by_path[f"{base}/layered.conf"]
 assert "layer" not in by_path[f"{base}/managed.conf"], "a file with no layer source named one"
+for partial in ("partial.conf", "noforce.conf"):
+    assert "sha256" not in by_path[f"{base}/{partial}"], f"{partial} was stamped: {by_path[f'{base}/{partial}']}"
 
 # The known blind spot, asserted so it stays known rather than being rediscovered.
 assert f"{base}/invisible.txt" not in files, "command side effects are not knowable here"

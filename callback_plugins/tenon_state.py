@@ -79,6 +79,8 @@ WRITE_ACTIONS = frozenset((
     "assemble", "get_url", "unarchive", "ini_file",
 ))
 
+# Actions that write the entire file; only these earn a checksum.
+WHOLE_FILE_ACTIONS = frozenset(("copy", "template", "assemble", "get_url"))
 # Package managers whose desired set is recorded for orphan tracking.
 PACKAGE_MANAGERS = ("brew", "cask")
 
@@ -265,9 +267,12 @@ class CallbackModule(CallbackBase):
             pass
         return entry
 
-    def _stamp_file(self, entry, dest, src):
-        """Record the checksum of what is on disk right after the write, and the layer `src` came from."""
-        if not self.check_mode:
+    def _stamp_file(self, entry, dest, src, action, wrote):
+        """Record the checksum of a whole file tenon wrote, and the layer `src` came from."""
+        # Partial edits (lineinfile and kin) leave the rest of the file to the
+        # user, and a `force: false` copy that did not write left the user's
+        # bytes: neither may look like tenon's.
+        if not self.check_mode and action in WHOLE_FILE_ACTIONS and wrote:
             digest = _sha256(dest)
             if digest:
                 entry["sha256"] = digest
@@ -299,7 +304,11 @@ class CallbackModule(CallbackBase):
                 bucket = self.managed_dirs if state == "directory" else self.managed_files
                 entry = bucket.setdefault(dest, self._manifest_entry(task, dest))
                 if bucket is self.managed_files:
-                    self._stamp_file(entry, dest, args.get("src"))
+                    # An unchanged task with force enabled left exactly the
+                    # rendered content; with `force: false` it may have left
+                    # the user's, so only a change proves the write.
+                    wrote = bool(sub.get("changed")) or args.get("force") is not False
+                    self._stamp_file(entry, dest, args.get("src"), action, wrote)
                 # `backup: true` leaves <dest>.<pid>.<date>@<time>~ beside the
                 # file and nothing ever removes it. Ansible names it in the
                 # result, so it is captured here rather than guessed at later
@@ -543,12 +552,13 @@ class CallbackModule(CallbackBase):
             for key in ("packages", "package_orphans"):
                 if isinstance(previous.get(key), list):
                     payload[key] = previous[key]
-        if self.check_mode:
-            recorded = {e.get("path"): e for e in previous.get("files", []) if isinstance(e, dict)}
-            for entry in files:
-                digest = (recorded.get(entry["path"]) or {}).get("sha256")
-                if digest:
-                    entry["sha256"] = digest
+        # Checksums carry over where this run did not (or could not) write the
+        # bytes: a check run, or a whole-file task that left the file alone.
+        recorded = {e.get("path"): e for e in previous.get("files") or [] if isinstance(e, dict)}
+        for entry in files:
+            digest = (recorded.get(entry["path"]) or {}).get("sha256")
+            if digest and "sha256" not in entry and entry["action"] in WHOLE_FILE_ACTIONS:
+                entry["sha256"] = digest
         self._write(self.manifest_file, payload)
 
     def _valid_packages(self, value):

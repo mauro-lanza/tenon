@@ -27,6 +27,26 @@
         content: "v1\n"
         mode: "0644"
 
+    # Whole-file only: a partial edit, or a `force: false` copy that left the
+    # user's file alone, must never look like bytes tenon wrote.
+    - name: A partially edited file
+      ansible.builtin.lineinfile:
+        path: "{{ m }}/partial.conf"
+        line: "one line"
+        create: true
+        mode: "0644"
+
+    - name: A user-owned file
+      ansible.builtin.shell: "printf user > '{{ m }}/noforce.conf'"
+      changed_when: false
+
+    - name: A copy that must not overwrite it
+      ansible.builtin.copy:
+        dest: "{{ m }}/noforce.conf"
+        content: "tenon\n"
+        force: false
+        mode: "0644"
+
     # Sourced from a fixture layer cache (TENON_LAYER_CACHE), so the manifest can
     # name the layer it came from.
     - name: A file deployed from a layer

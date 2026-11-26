@@ -177,13 +177,22 @@ def known_or_exit(found, ids):
         raise SystemExit(EXIT_USAGE)
 
 
-def remove_file(path, recorded, force, trash_root):
+def remove_file(path, recorded, force, trash_root, managed):
+    if not os.path.isabs(path) or os.path.normpath(path) != path:
+        return False, "refused: the recorded path is not an absolute, normalised path"
+    home = os.path.normpath(os.path.expanduser("~"))
+    if not path.startswith(home + os.sep):
+        return False, f"refused: outside {home}"
+    if path in managed:
+        return False, "refused: the path is managed again by the current manifest"
     safe, reason = file_safety(path, recorded)
     if os.path.isdir(path) and not os.path.islink(path):
         return False, "is a directory; directories are never removed"
     if not safe and not force:
         return False, f"skipped: {reason}; use --force to move it anyway"
-    target = os.path.join(trash_root, path.lstrip("/"))
+    target = os.path.normpath(os.path.join(trash_root, path.lstrip("/")))
+    if not target.startswith(os.path.normpath(trash_root) + os.sep):
+        return False, "refused: the trash path escapes the trash"
     os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
     shutil.move(path, target)
     return True, f"moved to {target}"
@@ -204,13 +213,14 @@ def cmd_remove(args):
     known_or_exit(found, args.ids)
     trash_root = os.path.join(args.trash_dir, time.strftime("%Y%m%d-%H%M%S"))
     results, handled = [], set()
+    managed = {e.get("path") for e in dict_entries(manifest, "files")}
     for oid in dict.fromkeys(args.ids):
         orphan = found[oid]
         try:
             if orphan["kind"] == "file":
                 recorded = next((e.get("sha256") for e in dict_entries(manifest, "orphans")
                                  if e.get("path") == orphan["path"]), None)
-                ok, message = remove_file(orphan["path"], recorded, args.force, trash_root)
+                ok, message = remove_file(orphan["path"], recorded, args.force, trash_root, managed)
             else:
                 ok, message = remove_package(orphan["manager"], orphan["name"], args.brew_prefix)
         except (OSError, subprocess.SubprocessError) as error:
