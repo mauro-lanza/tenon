@@ -738,11 +738,13 @@ cmd_orphans() {
         return 64
     fi
 {% endif %}
+    local log_file
+    log_file="${LOG_DIR}/$(date '+%Y%m%d-%H%M%S')-orphans.log"
     if [[ "$sub" == remove ]]; then
-        "$ORPHANS_PY" "$ORPHANS_BIN" remove --manifest "$MANIFEST_FILE" "${registry[@]}" \
+        "$ORPHANS_PY" "$ORPHANS_BIN" remove --manifest "$MANIFEST_FILE" "${registry[@]}" --log "$log_file" \
             --trash-dir "$TRASH_DIR" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
     else
-        "$ORPHANS_PY" "$ORPHANS_BIN" forget --manifest "$MANIFEST_FILE" "${registry[@]}" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
+        "$ORPHANS_PY" "$ORPHANS_BIN" forget --manifest "$MANIFEST_FILE" "${registry[@]}" --log "$log_file" "${flags[@]+"${flags[@]}"}" "${ids[@]}"
     fi
     rc=$?
     unset TENON_SUDO_PASSWORD

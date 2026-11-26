@@ -397,7 +397,7 @@ installed; `forget` keeps such an id hidden.
 
 `tenon orphans remove [--force] [--json] [--password-stdin] ID...` and
 `tenon orphans forget [--json] ID...` print `{"results": [{"id", "ok", "message"}]}`
-under `--json`, one entry per id. They take `run.lock` (busy: 75). An unknown id
+under `--json`, one entry per id. Both write `<log dir>/YYYYmmdd-HHMMSS-orphans.log` (the command, each item, brew's full output, the results); a failed item's `message` carries the last 10 lines of brew output. They take `run.lock` (busy: 75). An unknown id
 exits 64 and nothing is done. `remove` re-verifies each orphan first:
 
 - a file is moved to `~/.local/share/tenon/backups/trash/<YYYYmmdd-HHMMSS>/<its path>`

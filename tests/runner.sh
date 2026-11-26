@@ -525,7 +525,8 @@ case "\$1 \$2" in
     "list --formula") printf 'wget\nkeep\n' ;;
     "list --cask") printf 'appa\n' ;;
     "uninstall --formula") [[ -z "\${BREW_REFUSE:-}" ]] || { echo "Error: Refusing to uninstall \$3 because it is required by foo" >&2; exit 1; } ;;
-    "uninstall --cask") echo "askpass=\${SUDO_ASKPASS-} pw=\${TENON_SUDO_PASSWORD-}" >> "$T/brew-env" ;;
+    "uninstall --cask") echo "askpass=\${SUDO_ASKPASS-} pw=\${TENON_SUDO_PASSWORD-}" >> "$T/brew-env"
+        [[ -z "\${BREW_QUITFAIL:-}" ]] || { for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo "line\$i"; done; echo "Warning: Application 'x' did not quit." >&2; exit 1; } ;;
 esac
 STUB
 chmod +x "$T/bin/brew"
@@ -579,6 +580,11 @@ rc=0; run orphans forget deadbeef >/dev/null 2>&1 || rc=$?
 [[ "$rc" == 64 ]] || fail "forget of an unknown id exit $rc, want 64"
 echo "  ok  orphans forget: drops the entry, leaves the file, unknown id 64"
 
+rm -f "$T/brew-calls"
+rc=0; out="$(BREW_QUITFAIL=1 run orphans remove "$appa_id" 2>&1)" || rc=$?
+[[ "$rc" == 1 && "$out" == *line12* && "$out" == *line4* && "$out" != *line2$'\n'* && "$out" == *"quit appa and try again"* ]] || fail "multi-line brew failure not tailed (rc=$rc): $out"
+olog="$(latest_log)"
+[[ "$(grep -c '^line' "$olog")" == 12 && "$(grep -c 'FAILED' "$olog")" == 1 && "$(grep -c 'tenon orphans remove' "$olog")" == 1 ]] || fail "orphans log incomplete: $(cat "$olog")"
 rm -f "$T/brew-calls"
 rc=0; out="$(BREW_REFUSE=1 run orphans remove "$wget_id" 2>&1)" || rc=$?
 [[ "$rc" == 1 && "$out" == *"Refusing to uninstall"* && -n "$(oid wget)" ]] || fail "a brew refusal was not reported per item (rc=$rc): $out"
